@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Python Video: PiP & Screen Share</title>
+    <style>
+        body { margin: 0; font-family: 'Segoe UI', sans-serif; background: #0f0f0f; color: white; }
+        #main-container { display: flex; height: 100vh; overflow: hidden; }
+        
+        #video-grid { 
+            flex-grow: 1; display: grid; 
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); 
+            gap: 15px; padding: 20px; align-content: start; overflow-y: auto;
+        }
+        .video-wrapper { position: relative; width: 100%; cursor: pointer; }
+        .user-label { 
+            position: absolute; bottom: 15px; left: 15px; 
+            background: rgba(0,0,0,0.7); padding: 4px 10px; 
+            border-radius: 6px; font-size: 13px; z-index: 10;
+        }
+        video { 
+            width: 100%; background: #1a1a1a; border-radius: 12px; 
+            border: 2px solid #333; aspect-ratio: 16 / 9; object-fit: cover;
+        }
+        /* Mirror cameras but NOT screen shares */
+        .mirror { transform: scaleX(-1); }
+
+        #chat-sidebar { width: 350px; background: #181818; display: flex; flex-direction: column; border-left: 1px solid #222; }
+        #messages { flex-grow: 1; overflow-y: auto; padding: 15px; list-style: none; margin: 0; }
+        .msg { margin-bottom: 12px; font-size: 14px; }
+        .msg b { color: #3498db; }
+        
+        #chat-form { display: flex; padding: 15px; border-top: 1px solid #222; background: #121212; }
+        #chat-input { flex-grow: 1; padding: 10px; border-radius: 5px; border: 1px solid #333; background: #252525; color: white; outline: none; }
+        #send-btn { margin-left: 8px; padding: 10px 15px; background: #3498db; border: none; color: white; border-radius: 5px; cursor: pointer; }
+
+        #controls { position: fixed; bottom: 25px; left: 50%; transform: translateX(-50%); display: flex; gap: 15px; z-index: 100; }
+        .control-btn { padding: 12px 24px; border-radius: 50px; border: none; background: #27ae60; color: white; font-weight: bold; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.4); }
+        .control-btn.sharing { background: #e74c3c; }
+        .hint { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); font-size: 11px; color: #666; }
+    </style>
+</head>
+<body>
+
+<div id="controls">
+    <button id="screen-btn" class="control-btn">Share Screen</button>
+</div>
+<div class="hint">Click a video to toggle Picture-in-Picture</div>
+
+<div id="main-container">
+    <div id="video-grid"></div>
+    <div id="chat-sidebar">
+        <ul id="messages"></ul>
+        <form id="chat-form">
+            <input id="chat-input" placeholder="Type a message..." autocomplete="off">
+            <button id="send-btn" type="submit">Send</button>
+        </form>
+    </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+<script>
+    const username = prompt("Enter your username:") || "User_" + Math.floor(Math.random() * 1000);
+    const socket = io();
+    const videoGrid = document.getElementById('video-grid');
+    const messagesList = document.getElementById('messages');
+    const screenBtn = document.getElementById('screen-btn');
+
+    const peerConnections = {};
+    const frozenTimers = {};
+    let localStream;
+    let screenStream;
+    let isScreenSharing = false;
+
+    navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+        .then(stream => {
+            localStream = stream;
+            addVideoStream(document.createElement('video'), stream, username, "local-video", true);
+
+            socket.emit('join', { id: socket.id, username: username });
+
+            socket.on('user-joined', data => {
+                appendSystemMessage(`${data.username} joined`);
+                callUser(data.id, data.username);
+            });
+
+            socket.on('signal', async data => {
+                if (data.to !== socket.id) return;
+                if (!peerConnections[data.from]) createPeerConnection(data.from, data.username);
+                const pc = peerConnections[data.from];
+                if (data.sdp) {
+                    await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+                    if (data.sdp.type === 'offer') {
+                        const answer = await pc.createAnswer();
+                        await pc.setLocalDescription(answer);
+                        socket.emit('signal', { to: data.from, from: socket.id, username: username, sdp: pc.localDescription });
+                    }
+                } else if (data.ice) {
+                    try { await pc.addIceCandidate(new RTCIceCandidate(data.ice)); } catch (e) {}
+                }
+            });
+        });
+
+    async function callUser(userId, remoteName) {
+        const pc = createPeerConnection(userId, remoteName);
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit('signal', { to: userId, from: socket.id, username: username, sdp: pc.localDescription });
+    }
+
+    function createPeerConnection(userId, remoteName) {
+        const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+        peerConnections[userId] = pc;
+        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+        pc.ontrack = event => {
+            if (!document.getElementById(userId)) {
+                const video = document.createElement('video');
+                video.id = userId;
+                // Remote users start mirrored, but we'll toggle this if they share screen
+                addVideoStream(video, event.streams[0], remoteName, null, true);
+                monitorConnection(userId, pc);
+            }
+        };
+
+        pc.onicecandidate = event => {
+            if (event.candidate) socket.emit('signal', { to: userId, from: socket.id, ice: event.candidate });
+        };
+        return pc;
+    }
+
+    function addVideoStream(video, stream, name, customId = null, shouldMirror = true) {
+        const container = document.createElement('div');
+        container.className = 'video-wrapper';
+        container.id = "container-" + (customId || video.id);
+        
+        const label = document.createElement('div');
+        label.className = 'user-label';
+        label.innerText = name || "Connecting...";
+        
+        video.srcObject = stream;
+        video.onloadedmetadata = () => video.play();
+        video.muted = true;
+        if (shouldMirror) video.classList.add('mirror');
+
+        // Toggle Picture-in-Picture on click
+        container.addEventListener('click', async () => {
+            try {
+                if (video !== document.pictureInPictureElement) {
+                    await video.requestPictureInPicture();
+                } else {
+                    await document.exitPictureInPicture();
+                }
+            } catch (error) {
+                // If PiP fails, try full screen as fallback
+                if (video.requestFullscreen) video.requestFullscreen();
+            }
+        });
+        
+        container.append(label, video);
+        videoGrid.append(container);
+    }
+
+    // --- SCREEN SHARING LOGIC ---
+    screenBtn.addEventListener('click', async () => {
+        if (!isScreenSharing) {
+            try {
+                screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+                const screenTrack = screenStream.getVideoTracks()[0];
+
+                for (let id in peerConnections) {
+                    const sender = peerConnections[id].getSenders().find(s => s.track.kind === 'video');
+                    if (sender) sender.replaceTrack(screenTrack);
+                }
+
+                const localVid = document.querySelector('#container-local-video video');
+                localVid.srcObject = screenStream;
+                localVid.classList.remove('mirror'); // Don't mirror screen share
+
+                screenTrack.onended = () => stopScreenShare();
+                screenBtn.innerText = "Stop Sharing";
+                screenBtn.classList.add('sharing');
+                isScreenSharing = true;
+            } catch (err) { console.error(err); }
+        } else {
+            stopScreenShare();
+        }
+    });
+
+    function stopScreenShare() {
+        if (screenStream) screenStream.getTracks().forEach(t => t.stop());
+        const videoTrack = localStream.getVideoTracks()[0];
+        for (let id in peerConnections) {
+            const sender = peerConnections[id].getSenders().find(s => s.track.kind === 'video');
+            if (sender) sender.replaceTrack(videoTrack);
+        }
+        const localVid = document.querySelector('#container-local-video video');
+        localVid.srcObject = localStream;
+        localVid.classList.add('mirror'); // Re-mirror camera
+        
+        screenBtn.innerText = "Share Screen";
+        screenBtn.classList.remove('sharing');
+        isScreenSharing = false;
+    }
+
+    function monitorConnection(userId, pc) {
+        let lastFrameCount = 0;
+        let lastChangeTime = Date.now();
+        frozenTimers[userId] = setInterval(async () => {
+            const stats = await pc.getStats();
+            stats.forEach(report => {
+                if (report.type === 'inbound-rtp' && report.kind === 'video') {
+                    if (report.framesDecoded !== lastFrameCount) {
+                        lastFrameCount = report.framesDecoded;
+                        lastChangeTime = Date.now();
+                    } else if ((Date.now() - lastChangeTime) / 1000 >= 5) {
+                        removeUser(userId);
+                    }
+                }
+            });
+        }, 1000);
+    }
+
+    function removeUser(userId) {
+        if (frozenTimers[userId]) clearInterval(frozenTimers[userId]);
+        if (peerConnections[userId]) peerConnections[userId].close();
+        const container = document.getElementById("container-" + userId);
+        if (container) container.remove();
+        delete peerConnections[userId];
+        delete frozenTimers[userId];
+    }
+
+    document.getElementById('chat-form').addEventListener('submit', e => {
+        e.preventDefault();
+        const input = document.getElementById('chat-input');
+        if (input.value.trim()) {
+            socket.emit('chat-message', { username: username, msg: input.value });
+            input.value = '';
+        }
+    });
+
+    socket.on('chat-message', data => {
+        const li = document.createElement('li');
+        li.className = 'msg';
+        li.innerHTML = `<b>${data.username}:</b> ${data.msg}`;
+        messagesList.appendChild(li);
+        messagesList.scrollTop = messagesList.scrollHeight;
+    });
+
+    function appendSystemMessage(text) {
+        const li = document.createElement('li');
+        li.className = 'system-msg';
+        li.innerText = text;
+        messagesList.appendChild(li);
+    }
+</script>
+</body>
+</html>
