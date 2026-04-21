@@ -3,27 +3,39 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Python Video: PiP & Screen Share</title>
+    <title>WebRTC Video & Audio Chat</title>
     <style>
         body { margin: 0; font-family: 'Segoe UI', sans-serif; background: #0f0f0f; color: white; }
-        #main-container { display: flex; height: 100vh; overflow: hidden; }
+        #main-container { display: flex; height: 100vh; overflow: hidden; flex-direction: row; }
         
         #video-grid { 
             flex-grow: 1; display: grid; 
             grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); 
-            gap: 15px; padding: 20px; align-content: start; overflow-y: auto;
+            gap: 15px; padding: 20px; padding-bottom: 80px; align-content: start; overflow-y: auto;
         }
+        
         .video-wrapper { position: relative; width: 100%; cursor: pointer; }
-        .user-label { 
-            position: absolute; bottom: 15px; left: 15px; 
-            background: rgba(0,0,0,0.7); padding: 4px 10px; 
-            border-radius: 6px; font-size: 13px; z-index: 10;
+        
+        .video-ui-layer {
+            position: absolute; bottom: 15px; left: 15px; right: 15px;
+            display: flex; justify-content: space-between; align-items: center;
+            background: rgba(0,0,0,0.7); padding: 6px 12px; 
+            border-radius: 8px; z-index: 10; pointer-events: none; /* Let clicks pass through to trigger PiP */
         }
+        
+        .user-label { font-size: 14px; font-weight: bold; pointer-events: auto; }
+        
+        /* Volume Slider styling */
+        .vol-slider {
+            width: 80px; cursor: pointer; pointer-events: auto;
+            accent-color: #3498db;
+        }
+
         video { 
             width: 100%; background: #1a1a1a; border-radius: 12px; 
             border: 2px solid #333; aspect-ratio: 16 / 9; object-fit: cover;
         }
-        /* Mirror cameras but NOT screen shares */
+        
         .mirror { transform: scaleX(-1); }
 
         #chat-sidebar { width: 350px; background: #181818; display: flex; flex-direction: column; border-left: 1px solid #222; }
@@ -33,27 +45,41 @@
         
         #chat-form { display: flex; padding: 15px; border-top: 1px solid #222; background: #121212; }
         #chat-input { flex-grow: 1; padding: 10px; border-radius: 5px; border: 1px solid #333; background: #252525; color: white; outline: none; }
-        #send-btn { margin-left: 8px; padding: 10px 15px; background: #3498db; border: none; color: white; border-radius: 5px; cursor: pointer; }
+        #send-btn { margin-left: 8px; padding: 10px 15px; background: #3498db; border: none; color: white; border-radius: 5px; cursor: pointer; font-weight: bold; }
 
-        #controls { position: fixed; bottom: 25px; left: 50%; transform: translateX(-50%); display: flex; gap: 15px; z-index: 100; }
-        .control-btn { padding: 12px 24px; border-radius: 50px; border: none; background: #27ae60; color: white; font-weight: bold; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.4); }
-        .control-btn.sharing { background: #e74c3c; }
-        .hint { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); font-size: 11px; color: #666; }
+        #controls { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; gap: 15px; z-index: 100; }
+        .control-btn { padding: 12px 24px; border-radius: 50px; border: none; background: #2b2b2b; color: white; font-weight: bold; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.5); transition: background 0.2s; border: 1px solid #444; }
+        .control-btn:hover { background: #3d3d3d; }
+        .control-btn.active-green { background: #27ae60; border-color: #2ecc71; }
+        .control-btn.active-red { background: #e74c3c; border-color: #c0392b; }
+        
+        .hint { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); font-size: 12px; color: #888; background: rgba(0,0,0,0.5); padding: 4px 10px; border-radius: 10px; pointer-events: none; z-index: 100; }
+
+        /* Responsive Mobile Layout */
+        @media (max-width: 768px) {
+            #main-container { flex-direction: column; }
+            #video-grid { padding-bottom: 90px; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+            #chat-sidebar { width: 100%; height: 35vh; border-left: none; border-top: 2px solid #333; }
+            #controls { bottom: auto; top: 40px; transform: translateX(-50%) scale(0.85); width: max-content;}
+            .hint { display: none; }
+        }
     </style>
 </head>
 <body>
 
+<div class="hint">Click a video to toggle Picture-in-Picture</div>
+
 <div id="controls">
+    <button id="mute-btn" class="control-btn">Mute Mic</button>
     <button id="screen-btn" class="control-btn">Share Screen</button>
 </div>
-<div class="hint">Click a video to toggle Picture-in-Picture</div>
 
 <div id="main-container">
     <div id="video-grid"></div>
     <div id="chat-sidebar">
         <ul id="messages"></ul>
         <form id="chat-form">
-            <input id="chat-input" placeholder="Type a message..." autocomplete="off">
+            <input id="chat-input" placeholder="Type message..." autocomplete="off">
             <button id="send-btn" type="submit">Send</button>
         </form>
     </div>
@@ -65,18 +91,23 @@
     const socket = io(window.location.origin);
     const videoGrid = document.getElementById('video-grid');
     const messagesList = document.getElementById('messages');
+    
     const screenBtn = document.getElementById('screen-btn');
+    const muteBtn = document.getElementById('mute-btn');
 
     const peerConnections = {};
     const frozenTimers = {};
+    
     let localStream;
     let screenStream;
     let isScreenSharing = false;
+    let isMuted = false;
 
-    navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+    // ENABLE AUDIO HERE
+    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
         .then(stream => {
             localStream = stream;
-            addVideoStream(document.createElement('video'), stream, username, "local-video", true);
+            addVideoStream(document.createElement('video'), stream, username + " (You)", "local-video", true);
 
             socket.emit('join', { id: socket.id, username: username });
 
@@ -89,6 +120,7 @@
                 if (data.to !== socket.id) return;
                 if (!peerConnections[data.from]) createPeerConnection(data.from, data.username);
                 const pc = peerConnections[data.from];
+                
                 if (data.sdp) {
                     await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
                     if (data.sdp.type === 'offer') {
@@ -100,6 +132,9 @@
                     try { await pc.addIceCandidate(new RTCIceCandidate(data.ice)); } catch (e) {}
                 }
             });
+        }).catch(err => {
+            alert("Could not access Camera/Microphone. Please allow permissions.");
+            console.error(err);
         });
 
     async function callUser(userId, remoteName) {
@@ -112,13 +147,14 @@
     function createPeerConnection(userId, remoteName) {
         const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
         peerConnections[userId] = pc;
+        
+        // Add both video AND audio tracks to the connection
         localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
         pc.ontrack = event => {
             if (!document.getElementById(userId)) {
                 const video = document.createElement('video');
                 video.id = userId;
-                // Remote users start mirrored, but we'll toggle this if they share screen
                 addVideoStream(video, event.streams[0], remoteName, null, true);
                 monitorConnection(userId, pc);
             }
@@ -135,17 +171,42 @@
         container.className = 'video-wrapper';
         container.id = "container-" + (customId || video.id);
         
-        const label = document.createElement('div');
+        const uiLayer = document.createElement('div');
+        uiLayer.className = 'video-ui-layer';
+        
+        const label = document.createElement('span');
         label.className = 'user-label';
         label.innerText = name || "Connecting...";
+        uiLayer.appendChild(label);
+
+        // Add volume slider ONLY for remote users (prevent local echo)
+        if (customId !== "local-video") {
+            const volControl = document.createElement('input');
+            volControl.type = 'range';
+            volControl.min = '0';
+            volControl.max = '1';
+            volControl.step = '0.05';
+            volControl.value = '1';
+            volControl.className = 'vol-slider';
+            volControl.title = 'Adjust Volume';
+            
+            // Change remote video volume on slider input
+            volControl.addEventListener('input', (e) => {
+                video.volume = e.target.value;
+            });
+            uiLayer.appendChild(volControl);
+        } else {
+            // Force mute local video playback to avoid feedback loop
+            video.muted = true;
+        }
         
         video.srcObject = stream;
         video.onloadedmetadata = () => video.play();
-        video.muted = true;
         if (shouldMirror) video.classList.add('mirror');
 
-        // Toggle Picture-in-Picture on click
-        container.addEventListener('click', async () => {
+        // Toggle Picture-in-Picture on click (ignore clicks on volume slider)
+        container.addEventListener('click', async (e) => {
+            if(e.target.className === 'vol-slider') return; // Don't PiP when adjusting volume
             try {
                 if (video !== document.pictureInPictureElement) {
                     await video.requestPictureInPicture();
@@ -153,14 +214,25 @@
                     await document.exitPictureInPicture();
                 }
             } catch (error) {
-                // If PiP fails, try full screen as fallback
                 if (video.requestFullscreen) video.requestFullscreen();
             }
         });
         
-        container.append(label, video);
+        container.append(uiLayer, video);
         videoGrid.append(container);
     }
+
+    // --- MUTE AUDIO LOGIC ---
+    muteBtn.addEventListener('click', () => {
+        const audioTrack = localStream.getAudioTracks()[0];
+        if (audioTrack) {
+            isMuted = !isMuted;
+            audioTrack.enabled = !isMuted; // Toggle transmission
+            
+            muteBtn.innerText = isMuted ? "Unmute Mic" : "Mute Mic";
+            muteBtn.classList.toggle('active-red', isMuted);
+        }
+    });
 
     // --- SCREEN SHARING LOGIC ---
     screenBtn.addEventListener('click', async () => {
@@ -176,11 +248,11 @@
 
                 const localVid = document.querySelector('#container-local-video video');
                 localVid.srcObject = screenStream;
-                localVid.classList.remove('mirror'); // Don't mirror screen share
+                localVid.classList.remove('mirror'); 
 
                 screenTrack.onended = () => stopScreenShare();
                 screenBtn.innerText = "Stop Sharing";
-                screenBtn.classList.add('sharing');
+                screenBtn.classList.add('active-green');
                 isScreenSharing = true;
             } catch (err) { console.error(err); }
         } else {
@@ -191,19 +263,22 @@
     function stopScreenShare() {
         if (screenStream) screenStream.getTracks().forEach(t => t.stop());
         const videoTrack = localStream.getVideoTracks()[0];
+        
         for (let id in peerConnections) {
             const sender = peerConnections[id].getSenders().find(s => s.track.kind === 'video');
             if (sender) sender.replaceTrack(videoTrack);
         }
+        
         const localVid = document.querySelector('#container-local-video video');
         localVid.srcObject = localStream;
-        localVid.classList.add('mirror'); // Re-mirror camera
+        localVid.classList.add('mirror'); 
         
         screenBtn.innerText = "Share Screen";
-        screenBtn.classList.remove('sharing');
+        screenBtn.classList.remove('active-green');
         isScreenSharing = false;
     }
 
+    // Handle sudden disconnects
     function monitorConnection(userId, pc) {
         let lastFrameCount = 0;
         let lastChangeTime = Date.now();
@@ -231,6 +306,7 @@
         delete frozenTimers[userId];
     }
 
+    // --- CHAT LOGIC ---
     document.getElementById('chat-form').addEventListener('submit', e => {
         e.preventDefault();
         const input = document.getElementById('chat-input');
@@ -250,7 +326,9 @@
 
     function appendSystemMessage(text) {
         const li = document.createElement('li');
-        li.className = 'system-msg';
+        li.style.color = "#888";
+        li.style.fontSize = "12px";
+        li.style.textAlign = "center";
         li.innerText = text;
         messagesList.appendChild(li);
     }
