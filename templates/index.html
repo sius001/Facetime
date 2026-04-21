@@ -145,7 +145,33 @@
     }
 
     function createPeerConnection(userId, remoteName) {
-        const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+        const pc = new RTCPeerConnection({ 
+            iceServers: [
+                {
+                    urls: "stun:stun.relay.metered.ca:80",
+                },
+                {
+                    urls: "turn:global.relay.metered.ca:80",
+                    username: "e5000b7599ec091038a6e6f6",
+                    credential: "CWqnCf7Sda2AhDSQ",
+                },
+                {
+                    urls: "turn:global.relay.metered.ca:80?transport=tcp",
+                    username: "e5000b7599ec091038a6e6f6",
+                    credential: "CWqnCf7Sda2AhDSQ",
+                },
+                {
+                    urls: "turn:global.relay.metered.ca:443",
+                    username: "e5000b7599ec091038a6e6f6",
+                    credential: "CWqnCf7Sda2AhDSQ",
+                },
+                {
+                    urls: "turns:global.relay.metered.ca:443?transport=tcp",
+                    username: "e5000b7599ec091038a6e6f6",
+                    credential: "CWqnCf7Sda2AhDSQ",
+                },
+            ],
+        });
         peerConnections[userId] = pc;
         
         // Add both video AND audio tracks to the connection
