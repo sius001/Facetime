@@ -23,6 +23,7 @@
             width: 100%; background: #1a1a1a; border-radius: 12px; 
             border: 2px solid #333; aspect-ratio: 16 / 9; object-fit: cover;
         }
+        /* Mirror cameras but NOT screen shares */
         .mirror { transform: scaleX(-1); }
 
         #chat-sidebar { width: 350px; background: #181818; display: flex; flex-direction: column; border-left: 1px solid #222; }
@@ -61,102 +62,71 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
 <script>
     const username = prompt("Enter your username:") || "User_" + Math.floor(Math.random() * 1000);
-    const socket = io();
+    const socket = io(window.location.origin);
     const videoGrid = document.getElementById('video-grid');
     const messagesList = document.getElementById('messages');
     const screenBtn = document.getElementById('screen-btn');
 
     const peerConnections = {};
+    const frozenTimers = {};
     let localStream;
     let screenStream;
     let isScreenSharing = false;
 
-    // 1. Get Local Video
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+    navigator.mediaDevices.getUserMedia({ video: true, audio: false })
         .then(stream => {
             localStream = stream;
             addVideoStream(document.createElement('video'), stream, username, "local-video", true);
+
             socket.emit('join', { id: socket.id, username: username });
-        })
-        .catch(err => console.error("Access denied for camera/mic:", err));
 
-    // 2. Handle New Users
-    socket.on('user-joined', data => {
-        appendSystemMessage(`${data.username} joined`);
-        // We initialize the connection, which triggers 'onnegotiationneeded' to send the offer
-        createPeerConnection(data.id, data.username, true);
-    });
+            socket.on('user-joined', data => {
+                appendSystemMessage(`${data.username} joined`);
+                callUser(data.id, data.username);
+            });
 
-    // 3. The Signaling Logic (SDP & ICE)
-    socket.on('signal', async data => {
-        if (data.to !== socket.id) return;
-
-        if (!peerConnections[data.from]) {
-            createPeerConnection(data.from, data.username, false);
-        }
-        
-        const pc = peerConnections[data.from];
-
-        try {
-            if (data.sdp) {
-                await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-                if (data.sdp.type === 'offer') {
-                    const answer = await pc.createAnswer();
-                    await pc.setLocalDescription(answer);
-                    socket.emit('signal', { to: data.from, from: socket.id, sdp: pc.localDescription });
+            socket.on('signal', async data => {
+                if (data.to !== socket.id) return;
+                if (!peerConnections[data.from]) createPeerConnection(data.from, data.username);
+                const pc = peerConnections[data.from];
+                if (data.sdp) {
+                    await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+                    if (data.sdp.type === 'offer') {
+                        const answer = await pc.createAnswer();
+                        await pc.setLocalDescription(answer);
+                        socket.emit('signal', { to: data.from, from: socket.id, username: username, sdp: pc.localDescription });
+                    }
+                } else if (data.ice) {
+                    try { await pc.addIceCandidate(new RTCIceCandidate(data.ice)); } catch (e) {}
                 }
-            } else if (data.ice) {
-                await pc.addIceCandidate(new RTCIceCandidate(data.ice));
-            }
-        } catch (e) {
-            console.error("Signaling error:", e);
-        }
-    });
-
-    // 4. Create Peer Connection Function
-    function createPeerConnection(userId, remoteName, isOfferer) {
-        const pc = new RTCPeerConnection({
-            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+            });
         });
-        peerConnections[userId] = pc;
 
-        // Add local tracks to the connection
+    async function callUser(userId, remoteName) {
+        const pc = createPeerConnection(userId, remoteName);
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit('signal', { to: userId, from: socket.id, username: username, sdp: pc.localDescription });
+    }
+
+    function createPeerConnection(userId, remoteName) {
+        const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+        peerConnections[userId] = pc;
         localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
-        // Send ICE candidates to the other peer
-        pc.onicecandidate = event => {
-            if (event.candidate) {
-                socket.emit('signal', { to: userId, from: socket.id, ice: event.candidate });
-            }
-        };
-
-        // Automatic Negotiation
-        pc.onnegotiationneeded = async () => {
-            if (isOfferer) {
-                try {
-                    const offer = await pc.createOffer();
-                    await pc.setLocalDescription(offer);
-                    socket.emit('signal', { to: userId, from: socket.id, username: username, sdp: pc.localDescription });
-                } catch (err) { console.error(err); }
-            }
-        };
-
-        // When remote video arrives
         pc.ontrack = event => {
             if (!document.getElementById(userId)) {
                 const video = document.createElement('video');
                 video.id = userId;
+                // Remote users start mirrored, but we'll toggle this if they share screen
                 addVideoStream(video, event.streams[0], remoteName, null, true);
+                monitorConnection(userId, pc);
             }
         };
 
-        // Clean up on disconnect
-        pc.onconnectionstatechange = () => {
-            if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-                removeUser(userId);
-            }
+        pc.onicecandidate = event => {
+            if (event.candidate) socket.emit('signal', { to: userId, from: socket.id, ice: event.candidate });
         };
-
         return pc;
     }
 
@@ -167,17 +137,24 @@
         
         const label = document.createElement('div');
         label.className = 'user-label';
-        label.innerText = name || "User";
+        label.innerText = name || "Connecting...";
         
         video.srcObject = stream;
         video.onloadedmetadata = () => video.play();
+        video.muted = true;
         if (shouldMirror) video.classList.add('mirror');
 
+        // Toggle Picture-in-Picture on click
         container.addEventListener('click', async () => {
-            if (video !== document.pictureInPictureElement) {
-                await video.requestPictureInPicture().catch(() => video.requestFullscreen());
-            } else {
-                await document.exitPictureInPicture();
+            try {
+                if (video !== document.pictureInPictureElement) {
+                    await video.requestPictureInPicture();
+                } else {
+                    await document.exitPictureInPicture();
+                }
+            } catch (error) {
+                // If PiP fails, try full screen as fallback
+                if (video.requestFullscreen) video.requestFullscreen();
             }
         });
         
@@ -185,21 +162,21 @@
         videoGrid.append(container);
     }
 
-    // --- SCREEN SHARING ---
+    // --- SCREEN SHARING LOGIC ---
     screenBtn.addEventListener('click', async () => {
         if (!isScreenSharing) {
             try {
                 screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
                 const screenTrack = screenStream.getVideoTracks()[0];
 
-                Object.values(peerConnections).forEach(pc => {
-                    const sender = pc.getSenders().find(s => s.track.kind === 'video');
+                for (let id in peerConnections) {
+                    const sender = peerConnections[id].getSenders().find(s => s.track.kind === 'video');
                     if (sender) sender.replaceTrack(screenTrack);
-                });
+                }
 
                 const localVid = document.querySelector('#container-local-video video');
                 localVid.srcObject = screenStream;
-                localVid.classList.remove('mirror');
+                localVid.classList.remove('mirror'); // Don't mirror screen share
 
                 screenTrack.onended = () => stopScreenShare();
                 screenBtn.innerText = "Stop Sharing";
@@ -214,27 +191,46 @@
     function stopScreenShare() {
         if (screenStream) screenStream.getTracks().forEach(t => t.stop());
         const videoTrack = localStream.getVideoTracks()[0];
-        Object.values(peerConnections).forEach(pc => {
-            const sender = pc.getSenders().find(s => s.track.kind === 'video');
+        for (let id in peerConnections) {
+            const sender = peerConnections[id].getSenders().find(s => s.track.kind === 'video');
             if (sender) sender.replaceTrack(videoTrack);
-        });
+        }
         const localVid = document.querySelector('#container-local-video video');
         localVid.srcObject = localStream;
-        localVid.classList.add('mirror');
+        localVid.classList.add('mirror'); // Re-mirror camera
         
         screenBtn.innerText = "Share Screen";
         screenBtn.classList.remove('sharing');
         isScreenSharing = false;
     }
 
+    function monitorConnection(userId, pc) {
+        let lastFrameCount = 0;
+        let lastChangeTime = Date.now();
+        frozenTimers[userId] = setInterval(async () => {
+            const stats = await pc.getStats();
+            stats.forEach(report => {
+                if (report.type === 'inbound-rtp' && report.kind === 'video') {
+                    if (report.framesDecoded !== lastFrameCount) {
+                        lastFrameCount = report.framesDecoded;
+                        lastChangeTime = Date.now();
+                    } else if ((Date.now() - lastChangeTime) / 1000 >= 5) {
+                        removeUser(userId);
+                    }
+                }
+            });
+        }, 1000);
+    }
+
     function removeUser(userId) {
+        if (frozenTimers[userId]) clearInterval(frozenTimers[userId]);
         if (peerConnections[userId]) peerConnections[userId].close();
         const container = document.getElementById("container-" + userId);
         if (container) container.remove();
         delete peerConnections[userId];
+        delete frozenTimers[userId];
     }
 
-    // --- CHAT ---
     document.getElementById('chat-form').addEventListener('submit', e => {
         e.preventDefault();
         const input = document.getElementById('chat-input');
@@ -254,9 +250,7 @@
 
     function appendSystemMessage(text) {
         const li = document.createElement('li');
-        li.style.color = "#888";
-        li.style.fontSize = "12px";
-        li.style.margin = "5px 0";
+        li.className = 'system-msg';
         li.innerText = text;
         messagesList.appendChild(li);
     }
