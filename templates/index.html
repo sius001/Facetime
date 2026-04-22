@@ -97,24 +97,27 @@
     const frozenTimers = {};
     
     let localStream = new MediaStream(); // Initialize with empty stream
-    let screenStream;
+    let screenStream = null;
     let isScreenSharing = false;
     let isMuted = false;
 
     // --- INITIALIZATION ---
     async function init() {
         try {
-            // Attempt to get camera/mic
-            const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-            localStream = stream;
-            addVideoStream(document.createElement('video'), localStream, username + " (You)", "local-video", true);
+            // Attempt to get both camera and mic
+            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         } catch (err) {
-            console.warn("Camera/Mic denied. Continuing without local media.");
-            // Create a placeholder local video container anyway
-            addVideoStream(document.createElement('video'), null, username + " (You)", "local-video", true);
+            console.warn("Camera/Mic denied or unavailable. Trying audio-only...");
+            try {
+                // Fallback: If camera fails, attempt to get just the microphone
+                localStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+            } catch (err2) {
+                console.warn("Audio denied as well. Continuing without local media.");
+            }
         }
 
-        // Join room even if camera failed
+        // Always create the local container (it will be black if no video is available)
+        addVideoStream(document.createElement('video'), localStream, username + " (You)", "local-video", true);
         socket.emit('join', { id: socket.id, username: username });
     }
 
@@ -160,15 +163,29 @@
         });
         peerConnections[userId] = pc;
         
-        // Add existing tracks (if any)
-        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+        // Add all base tracks (audio + camera if not screen sharing)
+        localStream.getTracks().forEach(track => {
+            if (track.kind === 'video' && isScreenSharing) return;
+            pc.addTrack(track, localStream);
+        });
+
+        // Ensure new connections see the screen share if it's currently active
+        if (isScreenSharing && screenStream) {
+            const screenTrack = screenStream.getVideoTracks()[0];
+            if (screenTrack) pc.addTrack(screenTrack, localStream); // Use localStream ID to sync audio/video
+        }
 
         pc.ontrack = event => {
-            if (!document.getElementById(userId)) {
-                const video = document.createElement('video');
+            let video = document.getElementById(userId);
+            if (!video) {
+                // Initial stream connection
+                video = document.createElement('video');
                 video.id = userId;
-                addVideoStream(video, event.streams[0], remoteName, null, false); // Mirror off for remotes
+                addVideoStream(video, event.streams[0], remoteName, null, false);
                 monitorConnection(userId, pc);
+            } else {
+                // If a track is dynamically added mid-call, attach it to the existing wrapper
+                video.srcObject = event.streams[0];
             }
         };
 
@@ -176,7 +193,7 @@
             if (event.candidate) socket.emit('signal', { to: userId, from: socket.id, ice: event.candidate });
         };
 
-        // If tracks are added later (like screen sharing), re-negotiate
+        // This triggers automatically when tracks are dynamically added or removed
         pc.onnegotiationneeded = async () => {
             try {
                 const offer = await pc.createOffer();
@@ -260,8 +277,8 @@
                     if (videoSender) {
                         videoSender.replaceTrack(screenTrack);
                     } else {
-                        // If there was no camera track, add the screen track to the connection
-                        pc.addTrack(screenTrack, screenStream);
+                        // If no camera existed, add the screen track dynamically
+                        pc.addTrack(screenTrack, localStream);
                     }
                 }
 
@@ -288,25 +305,29 @@
             const pc = peerConnections[id];
             const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
             
-            if (videoSender && videoTrack) {
-                videoSender.replaceTrack(videoTrack);
-            } else if (videoSender && !videoTrack) {
-                // If sharing stopped and there's no camera to go back to, we could remove the track
-                // But typically we just leave it idle or let the peer handle the stream ending
+            if (videoSender) {
+                if (videoTrack) {
+                    // Put the camera track back
+                    videoSender.replaceTrack(videoTrack);
+                } else {
+                    // No camera to fall back on, remove the track completely
+                    pc.removeTrack(videoSender); 
+                }
             }
         }
         
         const localVid = document.querySelector('#container-local-video video');
+        localVid.srcObject = localStream;
         if (videoTrack) {
-            localVid.srcObject = localStream;
             localVid.classList.add('mirror');
         } else {
-            localVid.srcObject = null;
+            localVid.classList.remove('mirror');
         }
         
         screenBtn.innerText = "Share Screen";
         screenBtn.classList.remove('active-green');
         isScreenSharing = false;
+        screenStream = null;
     }
 
     function monitorConnection(userId, pc) {
@@ -319,7 +340,7 @@
                     if (report.framesDecoded !== lastFrameCount) {
                         lastFrameCount = report.framesDecoded;
                         lastChangeTime = Date.now();
-                    } else if ((Date.now() - lastChangeTime) / 1000 >= 8) { // 8 second timeout
+                    } else if ((Date.now() - lastChangeTime) / 1000 >= 8) { 
                         removeUser(userId);
                     }
                 }
