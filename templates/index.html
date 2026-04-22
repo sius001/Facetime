@@ -14,26 +14,25 @@
             gap: 15px; padding: 20px; padding-bottom: 80px; align-content: start; overflow-y: auto;
         }
         
-        .video-wrapper { position: relative; width: 100%; cursor: pointer; }
+        .video-wrapper { position: relative; width: 100%; cursor: pointer; background: #1a1a1a; border-radius: 12px; overflow: hidden; }
         
         .video-ui-layer {
             position: absolute; bottom: 15px; left: 15px; right: 15px;
             display: flex; justify-content: space-between; align-items: center;
             background: rgba(0,0,0,0.7); padding: 6px 12px; 
-            border-radius: 8px; z-index: 10; pointer-events: none; /* Let clicks pass through to trigger PiP */
+            border-radius: 8px; z-index: 10; pointer-events: none;
         }
         
         .user-label { font-size: 14px; font-weight: bold; pointer-events: auto; }
         
-        /* Volume Slider styling */
         .vol-slider {
             width: 80px; cursor: pointer; pointer-events: auto;
             accent-color: #3498db;
         }
 
         video { 
-            width: 100%; background: #1a1a1a; border-radius: 12px; 
-            border: 2px solid #333; aspect-ratio: 16 / 9; object-fit: cover;
+            width: 100%; aspect-ratio: 16 / 9; object-fit: cover;
+            border: 2px solid #333; display: block;
         }
         
         .mirror { transform: scaleX(-1); }
@@ -55,7 +54,6 @@
         
         .hint { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); font-size: 12px; color: #888; background: rgba(0,0,0,0.5); padding: 4px 10px; border-radius: 10px; pointer-events: none; z-index: 100; }
 
-        /* Responsive Mobile Layout */
         @media (max-width: 768px) {
             #main-container { flex-direction: column; }
             #video-grid { padding-bottom: 90px; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
@@ -98,37 +96,36 @@
     const peerConnections = {};
     const frozenTimers = {};
     
-    let localStream;
+    let localStream = new MediaStream(); // Initialize with empty stream
     let screenStream;
     let isScreenSharing = false;
     let isMuted = false;
 
-    // ENABLE AUDIO HERE
-    // Global placeholder for localStream
-    let localStream = new MediaStream(); 
-    
+    // --- INITIALIZATION ---
     async function init() {
         try {
-            // Try to get camera/mic
+            // Attempt to get camera/mic
             const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
             localStream = stream;
             addVideoStream(document.createElement('video'), localStream, username + " (You)", "local-video", true);
         } catch (err) {
-            console.warn("Camera/Mic access denied. You can still view others or share your screen.");
-            // Create an empty video element so the UI doesn't break
-            const placeholderVideo = document.createElement('video');
-            addVideoStream(placeholderVideo, null, username + " (You)", "local-video", true);
-            // Style the empty video to show it's off
-            placeholderVideo.style.background = "#333";
+            console.warn("Camera/Mic denied. Continuing without local media.");
+            // Create a placeholder local video container anyway
+            addVideoStream(document.createElement('video'), null, username + " (You)", "local-video", true);
         }
-    
-        // Join the socket regardless of camera status
+
+        // Join room even if camera failed
         socket.emit('join', { id: socket.id, username: username });
     }
-    
+
     init();
-    
-    // Update socket signal listener to handle potential lack of tracks
+
+    // --- SOCKET HANDLERS ---
+    socket.on('user-joined', data => {
+        appendSystemMessage(`${data.username} joined`);
+        callUser(data.id, data.username);
+    });
+
     socket.on('signal', async data => {
         if (data.to !== socket.id) return;
         if (!peerConnections[data.from]) createPeerConnection(data.from, data.username);
@@ -156,52 +153,30 @@
     function createPeerConnection(userId, remoteName) {
         const pc = new RTCPeerConnection({ 
             iceServers: [
-                {
-                    urls: "stun:stun.relay.metered.ca:80",
-                },
-                {
-                    urls: "turn:global.relay.metered.ca:80",
-                    username: "e5000b7599ec091038a6e6f6",
-                    credential: "CWqnCf7Sda2AhDSQ",
-                },
-                {
-                    urls: "turn:global.relay.metered.ca:80?transport=tcp",
-                    username: "e5000b7599ec091038a6e6f6",
-                    credential: "CWqnCf7Sda2AhDSQ",
-                },
-                {
-                    urls: "turn:global.relay.metered.ca:443",
-                    username: "e5000b7599ec091038a6e6f6",
-                    credential: "CWqnCf7Sda2AhDSQ",
-                },
-                {
-                    urls: "turns:global.relay.metered.ca:443?transport=tcp",
-                    username: "e5000b7599ec091038a6e6f6",
-                    credential: "CWqnCf7Sda2AhDSQ",
-                },
+                { urls: "stun:stun.relay.metered.ca:80" },
+                { urls: "turn:global.relay.metered.ca:80", username: "e5000b7599ec091038a6e6f6", credential: "CWqnCf7Sda2AhDSQ" },
+                { urls: "turn:global.relay.metered.ca:443", username: "e5000b7599ec091038a6e6f6", credential: "CWqnCf7Sda2AhDSQ" }
             ],
         });
         peerConnections[userId] = pc;
-    
-        // Only add tracks if they exist
-        if (localStream) {
-            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-        }
-    
+        
+        // Add existing tracks (if any)
+        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
         pc.ontrack = event => {
             if (!document.getElementById(userId)) {
                 const video = document.createElement('video');
                 video.id = userId;
-                addVideoStream(video, event.streams[0], remoteName, null, true);
+                addVideoStream(video, event.streams[0], remoteName, null, false); // Mirror off for remotes
                 monitorConnection(userId, pc);
             }
         };
-    
+
         pc.onicecandidate = event => {
             if (event.candidate) socket.emit('signal', { to: userId, from: socket.id, ice: event.candidate });
         };
-        
-        // Critical for screen sharing if no initial camera:
+
+        // If tracks are added later (like screen sharing), re-negotiate
         pc.onnegotiationneeded = async () => {
             try {
                 const offer = await pc.createOffer();
@@ -209,11 +184,11 @@
                 socket.emit('signal', { to: userId, from: socket.id, username: username, sdp: pc.localDescription });
             } catch (err) { console.error(err); }
         };
-    
+
         return pc;
     }
 
-    function addVideoStream(video, stream, name, customId = null, shouldMirror = true) {
+    function addVideoStream(video, stream, name, customId = null, shouldMirror = false) {
         const container = document.createElement('div');
         container.className = 'video-wrapper';
         container.id = "container-" + (customId || video.id);
@@ -226,40 +201,29 @@
         label.innerText = name || "Connecting...";
         uiLayer.appendChild(label);
 
-        // Add volume slider ONLY for remote users (prevent local echo)
         if (customId !== "local-video") {
             const volControl = document.createElement('input');
             volControl.type = 'range';
-            volControl.min = '0';
-            volControl.max = '1';
-            volControl.step = '0.05';
-            volControl.value = '1';
+            volControl.min = '0'; volControl.max = '1'; volControl.step = '0.05'; volControl.value = '1';
             volControl.className = 'vol-slider';
-            volControl.title = 'Adjust Volume';
-            
-            // Change remote video volume on slider input
-            volControl.addEventListener('input', (e) => {
-                video.volume = e.target.value;
-            });
+            volControl.addEventListener('input', (e) => { video.volume = e.target.value; });
             uiLayer.appendChild(volControl);
         } else {
-            // Force mute local video playback to avoid feedback loop
-            video.muted = true;
+            video.muted = true; // Always mute local video
         }
         
-        video.srcObject = stream;
-        video.onloadedmetadata = () => video.play();
+        if (stream) {
+            video.srcObject = stream;
+            video.onloadedmetadata = () => video.play();
+        }
+
         if (shouldMirror) video.classList.add('mirror');
 
-        // Toggle Picture-in-Picture on click (ignore clicks on volume slider)
         container.addEventListener('click', async (e) => {
-            if(e.target.className === 'vol-slider') return; // Don't PiP when adjusting volume
+            if(e.target.className === 'vol-slider') return;
             try {
-                if (video !== document.pictureInPictureElement) {
-                    await video.requestPictureInPicture();
-                } else {
-                    await document.exitPictureInPicture();
-                }
+                if (video !== document.pictureInPictureElement) await video.requestPictureInPicture();
+                else await document.exitPictureInPicture();
             } catch (error) {
                 if (video.requestFullscreen) video.requestFullscreen();
             }
@@ -269,41 +233,43 @@
         videoGrid.append(container);
     }
 
-    // --- MUTE AUDIO LOGIC ---
+    // --- MUTE AUDIO ---
     muteBtn.addEventListener('click', () => {
         const audioTrack = localStream.getAudioTracks()[0];
         if (audioTrack) {
             isMuted = !isMuted;
-            audioTrack.enabled = !isMuted; // Toggle transmission
-            
+            audioTrack.enabled = !isMuted;
             muteBtn.innerText = isMuted ? "Unmute Mic" : "Mute Mic";
             muteBtn.classList.toggle('active-red', isMuted);
+        } else {
+            alert("No microphone found.");
         }
     });
 
+    // --- SCREEN SHARING ---
     screenBtn.addEventListener('click', async () => {
         if (!isScreenSharing) {
             try {
                 screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
                 const screenTrack = screenStream.getVideoTracks()[0];
-    
+
                 for (let id in peerConnections) {
                     const pc = peerConnections[id];
-                    const senders = pc.getSenders();
-                    const videoSender = senders.find(s => s.track && s.track.kind === 'video');
-    
+                    const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+                    
                     if (videoSender) {
                         videoSender.replaceTrack(screenTrack);
                     } else {
-                        // If no camera existed, we add the track for the first time
+                        // If there was no camera track, add the screen track to the connection
                         pc.addTrack(screenTrack, screenStream);
                     }
                 }
-    
+
                 const localVid = document.querySelector('#container-local-video video');
                 localVid.srcObject = screenStream;
                 localVid.classList.remove('mirror'); 
-    
+                localVid.play();
+
                 screenTrack.onended = () => stopScreenShare();
                 screenBtn.innerText = "Stop Sharing";
                 screenBtn.classList.add('active-green');
@@ -319,20 +285,30 @@
         const videoTrack = localStream.getVideoTracks()[0];
         
         for (let id in peerConnections) {
-            const sender = peerConnections[id].getSenders().find(s => s.track.kind === 'video');
-            if (sender) sender.replaceTrack(videoTrack);
+            const pc = peerConnections[id];
+            const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+            
+            if (videoSender && videoTrack) {
+                videoSender.replaceTrack(videoTrack);
+            } else if (videoSender && !videoTrack) {
+                // If sharing stopped and there's no camera to go back to, we could remove the track
+                // But typically we just leave it idle or let the peer handle the stream ending
+            }
         }
         
         const localVid = document.querySelector('#container-local-video video');
-        localVid.srcObject = localStream;
-        localVid.classList.add('mirror'); 
+        if (videoTrack) {
+            localVid.srcObject = localStream;
+            localVid.classList.add('mirror');
+        } else {
+            localVid.srcObject = null;
+        }
         
         screenBtn.innerText = "Share Screen";
         screenBtn.classList.remove('active-green');
         isScreenSharing = false;
     }
 
-    // Handle sudden disconnects
     function monitorConnection(userId, pc) {
         let lastFrameCount = 0;
         let lastChangeTime = Date.now();
@@ -343,12 +319,12 @@
                     if (report.framesDecoded !== lastFrameCount) {
                         lastFrameCount = report.framesDecoded;
                         lastChangeTime = Date.now();
-                    } else if ((Date.now() - lastChangeTime) / 1000 >= 5) {
+                    } else if ((Date.now() - lastChangeTime) / 1000 >= 8) { // 8 second timeout
                         removeUser(userId);
                     }
                 }
             });
-        }, 1000);
+        }, 2000);
     }
 
     function removeUser(userId) {
@@ -360,7 +336,7 @@
         delete frozenTimers[userId];
     }
 
-    // --- CHAT LOGIC ---
+    // --- CHAT ---
     document.getElementById('chat-form').addEventListener('submit', e => {
         e.preventDefault();
         const input = document.getElementById('chat-input');
