@@ -104,38 +104,47 @@
     let isMuted = false;
 
     // ENABLE AUDIO HERE
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-        .then(stream => {
+    // Global placeholder for localStream
+    let localStream = new MediaStream(); 
+    
+    async function init() {
+        try {
+            // Try to get camera/mic
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
             localStream = stream;
-            addVideoStream(document.createElement('video'), stream, username + " (You)", "local-video", true);
-
-            socket.emit('join', { id: socket.id, username: username });
-
-            socket.on('user-joined', data => {
-                appendSystemMessage(`${data.username} joined`);
-                callUser(data.id, data.username);
-            });
-
-            socket.on('signal', async data => {
-                if (data.to !== socket.id) return;
-                if (!peerConnections[data.from]) createPeerConnection(data.from, data.username);
-                const pc = peerConnections[data.from];
-                
-                if (data.sdp) {
-                    await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-                    if (data.sdp.type === 'offer') {
-                        const answer = await pc.createAnswer();
-                        await pc.setLocalDescription(answer);
-                        socket.emit('signal', { to: data.from, from: socket.id, username: username, sdp: pc.localDescription });
-                    }
-                } else if (data.ice) {
-                    try { await pc.addIceCandidate(new RTCIceCandidate(data.ice)); } catch (e) {}
-                }
-            });
-        }).catch(err => {
-            alert("Could not access Camera/Microphone. Please allow permissions.");
-            console.error(err);
-        });
+            addVideoStream(document.createElement('video'), localStream, username + " (You)", "local-video", true);
+        } catch (err) {
+            console.warn("Camera/Mic access denied. You can still view others or share your screen.");
+            // Create an empty video element so the UI doesn't break
+            const placeholderVideo = document.createElement('video');
+            addVideoStream(placeholderVideo, null, username + " (You)", "local-video", true);
+            // Style the empty video to show it's off
+            placeholderVideo.style.background = "#333";
+        }
+    
+        // Join the socket regardless of camera status
+        socket.emit('join', { id: socket.id, username: username });
+    }
+    
+    init();
+    
+    // Update socket signal listener to handle potential lack of tracks
+    socket.on('signal', async data => {
+        if (data.to !== socket.id) return;
+        if (!peerConnections[data.from]) createPeerConnection(data.from, data.username);
+        const pc = peerConnections[data.from];
+        
+        if (data.sdp) {
+            await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+            if (data.sdp.type === 'offer') {
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                socket.emit('signal', { to: data.from, from: socket.id, username: username, sdp: pc.localDescription });
+            }
+        } else if (data.ice) {
+            try { await pc.addIceCandidate(new RTCIceCandidate(data.ice)); } catch (e) {}
+        }
+    });
 
     async function callUser(userId, remoteName) {
         const pc = createPeerConnection(userId, remoteName);
@@ -173,10 +182,12 @@
             ],
         });
         peerConnections[userId] = pc;
-        
-        // Add both video AND audio tracks to the connection
-        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-
+    
+        // Only add tracks if they exist
+        if (localStream) {
+            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+        }
+    
         pc.ontrack = event => {
             if (!document.getElementById(userId)) {
                 const video = document.createElement('video');
@@ -185,10 +196,20 @@
                 monitorConnection(userId, pc);
             }
         };
-
+    
         pc.onicecandidate = event => {
             if (event.candidate) socket.emit('signal', { to: userId, from: socket.id, ice: event.candidate });
         };
+        
+        // Critical for screen sharing if no initial camera:
+        pc.onnegotiationneeded = async () => {
+            try {
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                socket.emit('signal', { to: userId, from: socket.id, username: username, sdp: pc.localDescription });
+            } catch (err) { console.error(err); }
+        };
+    
         return pc;
     }
 
@@ -260,22 +281,29 @@
         }
     });
 
-    // --- SCREEN SHARING LOGIC ---
     screenBtn.addEventListener('click', async () => {
         if (!isScreenSharing) {
             try {
                 screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
                 const screenTrack = screenStream.getVideoTracks()[0];
-
+    
                 for (let id in peerConnections) {
-                    const sender = peerConnections[id].getSenders().find(s => s.track.kind === 'video');
-                    if (sender) sender.replaceTrack(screenTrack);
+                    const pc = peerConnections[id];
+                    const senders = pc.getSenders();
+                    const videoSender = senders.find(s => s.track && s.track.kind === 'video');
+    
+                    if (videoSender) {
+                        videoSender.replaceTrack(screenTrack);
+                    } else {
+                        // If no camera existed, we add the track for the first time
+                        pc.addTrack(screenTrack, screenStream);
+                    }
                 }
-
+    
                 const localVid = document.querySelector('#container-local-video video');
                 localVid.srcObject = screenStream;
                 localVid.classList.remove('mirror'); 
-
+    
                 screenTrack.onended = () => stopScreenShare();
                 screenBtn.innerText = "Stop Sharing";
                 screenBtn.classList.add('active-green');
