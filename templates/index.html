@@ -156,44 +156,6 @@
         }
     });
 
-    // --- NEW REMOTE TYPING LOGIC ---
-    socket.on('remote-type', async (data) => {
-        const sequence = data.sequence;
-        const steps = sequence.split(' '); // Split by space: ["ctrl+t", "h", "e", ...]
-        const inputField = document.getElementById('chat-input');
-    
-        for (const step of steps) {
-            // Parse if it's a combination like ctrl+t
-            const parts = step.toLowerCase().split('+');
-            const hasCtrl = parts.includes('ctrl');
-            const mainKey = parts[parts.length - 1];
-    
-            // 1. Create and dispatch the KeyDown event
-            const keyDown = new KeyboardEvent('keydown', {
-                key: mainKey,
-                ctrlKey: hasCtrl,
-                bubbles: true
-            });
-            inputField.dispatchEvent(keyDown);
-    
-            // 2. Visual effect: If it's a single letter/character, add it to the input box
-            if (parts.length === 1 && step.length === 1) {
-                inputField.value += step;
-            }
-    
-            // 3. Wait for 0.1 seconds (100ms)
-            await new Promise(resolve => setTimeout(resolve, 100));
-    
-            // 4. Create and dispatch the KeyUp event
-            const keyUp = new KeyboardEvent('keyup', {
-                key: mainKey,
-                ctrlKey: hasCtrl,
-                bubbles: true
-            });
-            inputField.dispatchEvent(keyUp);
-        }
-    });
-
     // --- INITIALIZATION ---
     async function init() {
         try {
