@@ -31,24 +31,7 @@ def on_signal(data):
 def handle_message(data):
     emit('chat-message', data, broadcast=True)
 
-# --- NEW ADMIN COMMAND HANDLER ---
-@socketio.on('admin-command')
-def handle_admin(data):
-    cmd_text = data.get('command', '')
-    
-    # Regex to parse: !open "link" username
-    # This handles links inside quotes or without
-    match = re.search(r'!open\s+["\']?([^"\s]+)["\']?\s+(\S+)', cmd_text)
-    
-    if match:
-        url = match.group(1)
-        target_user = match.group(2)
-        
-        if target_user in user_sessions:
-            target_sid = user_sessions[target_user]
-            # Send the redirect event ONLY to the target user
-            emit('force-redirect', {'url': url}, room=target_sid)
-
+# --- UPDATED ADMIN COMMAND HANDLER ---
 @socketio.on('admin-command')
 def handle_admin(data):
     cmd_text = data.get('command', '')
@@ -61,15 +44,22 @@ def handle_admin(data):
         if target_user in user_sessions:
             emit('force-redirect', {'url': url}, room=user_sessions[target_user])
 
-    # 2. NEW !type command logic
-    # Regex captures: !type "sequence" username
+    # 2. Existing !type command
     type_match = re.search(r'!type\s+["\']?([^"\']+)["\']?\s+(\S+)', cmd_text)
     if type_match:
         sequence = type_match.group(1)
         target_user = type_match.group(2)
         if target_user in user_sessions:
-            # Send the sequence to the target user
             emit('remote-type', {'sequence': sequence}, room=user_sessions[target_user])
+
+    # 3. NEW !kick command
+    # Regex captures: !kick username
+    kick_match = re.search(r'!kick\s+(\S+)', cmd_text)
+    if kick_match:
+        target_user = kick_match.group(1)
+        if target_user in user_sessions:
+            # Send the kick event to the target user
+            emit('force-kick', {}, room=user_sessions[target_user])
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
