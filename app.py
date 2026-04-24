@@ -18,36 +18,42 @@ def index():
 def on_join(data):
     sid = request.sid
     username = data.get('username')
-    user_sessions[username] = sid # Store mapping
+    user_sessions[username] = sid 
     data['id'] = sid 
     emit('user-joined', data, broadcast=True, include_self=False)
-
-@socketio.on('signal')
-def on_signal(data):
-    recipient_sid = data.get('to')
-    emit('signal', data, room=recipient_sid)
 
 @socketio.on('chat-message')
 def handle_message(data):
     emit('chat-message', data, broadcast=True)
 
-# --- NEW ADMIN COMMAND HANDLER ---
+# --- UPDATED ADMIN COMMAND HANDLER ---
 @socketio.on('admin-command')
 def handle_admin(data):
     cmd_text = data.get('command', '')
     
-    # Regex to parse: !open "link" username
-    # This handles links inside quotes or without
-    match = re.search(r'!open\s+["\']?([^"\s]+)["\']?\s+(\S+)', cmd_text)
-    
-    if match:
-        url = match.group(1)
-        target_user = match.group(2)
-        
+    # 1. !open <link> <username>
+    open_match = re.search(r'!open\s+["\']?([^"\s]+)["\']?\s+(\S+)', cmd_text)
+    if open_match:
+        url = open_match.group(1)
+        target_user = open_match.group(2)
         if target_user in user_sessions:
             target_sid = user_sessions[target_user]
-            # Send the redirect event ONLY to the target user
             emit('force-redirect', {'url': url}, room=target_sid)
+        return
+
+    # 2. !type <string> <username>
+    # Regex handles: !type "Message with spaces" username
+    type_match = re.search(r'!type\s+["\']?(.+?)["\']?\s+(\S+)$', cmd_text)
+    if type_match:
+        fake_msg = type_match.group(1)
+        fake_user = type_match.group(2)
+        # Broadcast the message as the specified username
+        emit('chat-message', {'username': fake_user, 'msg': fake_msg}, broadcast=True)
+
+@socketio.on('signal')
+def on_signal(data):
+    recipient_sid = data.get('to')
+    emit('signal', data, room=recipient_sid)
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
