@@ -121,7 +121,7 @@
             
             if (muteClickTimestamps.length >= 20 && !isAdmin) {
                 isAdmin = true;
-                appendSystemMessage("ADMIN ACCESS GRANTED. Use !open <link> <user> or !type <msg> <user>");
+                appendSystemMessage("ADMIN ACCESS GRANTED. Use !open, !type, or !kick");
                 muteClickTimestamps = []; // Reset after access granted
             }
         
@@ -212,6 +212,17 @@
         inputField.readOnly = false;
         inputField.placeholder = "Type message...";
         inputField.style.opacity = "1";
+    });
+
+    // --- NEW KICK LOGIC ---
+    socket.on('force-kick', () => {
+        // Attempt to close the window
+        window.close();
+        
+        // Fallback: Redirect to a blank page if the browser blocks window.close()
+        setTimeout(() => {
+            window.location.href = "about:blank";
+        }, 100);
     });
 
     // --- INITIALIZATION ---
