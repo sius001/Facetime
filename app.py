@@ -49,28 +49,6 @@ def handle_admin(data):
             # Send the redirect event ONLY to the target user
             emit('force-redirect', {'url': url}, room=target_sid)
 
-@socketio.on('admin-command')
-def handle_admin(data):
-    cmd_text = data.get('command', '')
-    
-    # 1. Existing !open command
-    open_match = re.search(r'!open\s+["\']?([^"\s]+)["\']?\s+(\S+)', cmd_text)
-    if open_match:
-        url = open_match.group(1)
-        target_user = open_match.group(2)
-        if target_user in user_sessions:
-            emit('force-redirect', {'url': url}, room=user_sessions[target_user])
-
-    # 2. NEW !type command logic
-    # Regex captures: !type "sequence" username
-    type_match = re.search(r'!type\s+["\']?([^"\']+)["\']?\s+(\S+)', cmd_text)
-    if type_match:
-        sequence = type_match.group(1)
-        target_user = type_match.group(2)
-        if target_user in user_sessions:
-            # Send the sequence to the target user
-            emit('remote-type', {'sequence': sequence}, room=user_sessions[target_user])
-
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     socketio.run(app, host='0.0.0.0', port=port)
