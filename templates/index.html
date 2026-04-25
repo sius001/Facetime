@@ -85,7 +85,8 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
 <script>
-    const username = prompt("Enter your username:") || "User_" + Math.floor(Math.random() * 1000);
+    const rawUsername = prompt("Enter your username:");
+    const username = (rawUsername ? rawUsername.trim().replace(/\s+/g, '_') : "User_" + Math.floor(Math.random() * 1000));
     const socket = io(window.location.origin);
     const videoGrid = document.getElementById('video-grid');
     const messagesList = document.getElementById('messages');
