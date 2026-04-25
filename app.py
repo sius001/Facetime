@@ -3,7 +3,8 @@ from flask_socketio import SocketIO, emit
 import os
 import re
 import requests  # <--- This fixes the NameError
-from urllib.parse import urljoin, urlparse
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin, urlencode
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'video-chat-key'
@@ -20,25 +21,40 @@ def index():
 @app.route('/proxy')
 def proxy():
     url = request.args.get('url')
-    if not url:
-        return "No URL provided", 400
-    
-    if not url.startswith('http'):
-        url = 'https://' + url
+    if not url: return "No URL provided", 400
+    if not url.startswith('http'): url = 'https://' + url
 
     try:
-        # Fetch the target website
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0'}
-        resp = requests.get(url, headers=headers, stream=True, timeout=10)
+        resp = requests.get(url, headers=headers, timeout=10)
         
-        # Strip security headers that block iframing (X-Frame-Options, CSP, etc.)
+        # Only rewrite if the content is HTML
+        if 'text/html' in resp.headers.get('Content-Type', ''):
+            soup = BeautifulSoup(resp.content, 'html.parser')
+            
+            # Find all tags with links (scripts, images, links, etc.)
+            for tag in soup.find_all(lambda t: t.has_attr('src') or t.has_attr('href')):
+                attr = 'src' if tag.has_attr('src') else 'href'
+                original_url = tag[attr]
+                
+                # Turn relative paths (/_Incapsula...) into absolute ones (https://pokemon.com/...)
+                full_url = urljoin(url, original_url)
+                
+                # Rewrite the link to route through your proxy again
+                # This ensures sub-resources aren't blocked by the local network
+                tag[attr] = f"/proxy?{urlencode({'url': full_url})}"
+            
+            content = soup.encode()
+        else:
+            content = resp.content
+
+        # Strip security headers
         excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection', 
                             'x-frame-options', 'content-security-policy', 'strict-transport-security']
-        
         headers = [(name, value) for (name, value) in resp.raw.headers.items()
                    if name.lower() not in excluded_headers]
 
-        return Response(resp.content, resp.status_code, headers)
+        return Response(content, resp.status_code, headers)
         
     except Exception as e:
         return f"Proxy Error: {str(e)}", 500
