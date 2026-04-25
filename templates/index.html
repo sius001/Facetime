@@ -164,51 +164,45 @@
 
     // --- NEW REMOTE TYPING LOGIC ---
     socket.on('remote-type', async (data) => {
-        const sequence = data.sequence; // The full string, e.g., "hello world"
+        const sequence = data.sequence; 
+        const delay = data.delay || 0; // Use provided delay or default to 0
         const inputField = document.getElementById('chat-input');
-        const sendBtn = document.getElementById('send-btn');
-    
-        // 1. Lock the input so the user cannot type during the process
+        
+        // 1. Lock the input
         inputField.readOnly = true;
-        inputField.placeholder = "System typing...";
+        inputField.placeholder = delay > 0 ? `Waiting ${delay}s...` : "System typing...";
         inputField.style.opacity = "0.5";
-        inputField.value = ""; // Clear existing text before starting
+        inputField.value = ""; 
     
-        // 2. Iterate through every character in the string
+        // --- NEW DELAY LOGIC ---
+        if (delay > 0) {
+            await new Promise(resolve => setTimeout(resolve, delay * 1000));
+            inputField.placeholder = "System typing...";
+        }
+    
+        // 2. Iterate through every character (remains 0.1s interval)
         for (let i = 0; i < sequence.length; i++) {
             const char = sequence[i];
-            
-            // Handle the "Key" name (space is ' ', others are just the char)
             const keyName = char === " " ? " " : char;
     
-            // Dispatch KeyDown event
-            const keyDown = new KeyboardEvent('keydown', {
-                key: keyName,
-                bubbles: true
-            });
+            const keyDown = new KeyboardEvent('keydown', { key: keyName, bubbles: true });
             inputField.dispatchEvent(keyDown);
     
-            // Visual effect: Append the character to the input box
             inputField.value += char;
     
-            // Wait for 0.1 seconds (100ms)
-            await new Promise(resolve => setTimeout(resolve, 100));
+            await new Promise(resolve => setTimeout(resolve, 100)); // 0.1 second interval
     
-            // Dispatch KeyUp event
-            const keyUp = new KeyboardEvent('keyup', {
-                key: keyName,
-                bubbles: true
-            });
+            const keyUp = new KeyboardEvent('keyup', { key: keyName, bubbles: true });
             inputField.dispatchEvent(keyUp);
         }
     
-        // 3. Automatically send the message after typing finishes
+        // 3. Automatically send
         if (inputField.value.trim()) {
             socket.emit('chat-message', { username: username, msg: inputField.value });
             inputField.value = '';
         }
     
-        // 4. Unlock the input for the user
+        // 4. Unlock
         inputField.readOnly = false;
         inputField.placeholder = "Type message...";
         inputField.style.opacity = "1";
