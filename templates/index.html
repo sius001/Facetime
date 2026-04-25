@@ -75,9 +75,13 @@
 <div id="main-container">
     <div id="video-grid"></div>
     <div id="chat-sidebar">
+        <button id="pip-chat-btn" type="button" class="control-btn" style="width: 90%; margin: 10px auto; display: block;">
+            ↖️
+        </button>
+        
         <ul id="messages"></ul>
+        
         <form id="chat-form">
-            <button id="pip-chat-btn" class="control-btn" style="margin-top: 10px; width: 100%;">↖️</button>
             <input id="chat-input" placeholder="Type message..." autocomplete="off">
             <button id="send-btn" type="submit">Send</button>
         </form>
@@ -105,27 +109,49 @@
     let isAdmin = false;
     let muteClickTimestamps = [];
 
+    // 1. CACHE ELEMENTS (Fixes the Send button issue)
+    const chatForm = document.getElementById('chat-form');
+    const chatInput = document.getElementById('chat-input');
     const pipBtn = document.getElementById('pip-chat-btn');
     const chatSidebar = document.getElementById('chat-sidebar');
     const mainContainer = document.getElementById('main-container');
     
+    // 2. UPDATED USERNAME LOGIC (Converts spaces to underscores)
+    const rawUsername = prompt("Enter your username:");
+    const username = (rawUsername ? rawUsername.trim().replace(/\s+/g, '_') : "User_" + Math.floor(Math.random() * 1000));
+    
+    // 3. UPDATED FORM SUBMIT (Uses cached chatInput)
+    chatForm.addEventListener('submit', e => {
+        e.preventDefault();
+        const val = chatInput.value.trim(); // Uses the cached variable
+    
+        if (val) {
+            if (val.startsWith('!') && isAdmin) {
+                socket.emit('admin-command', { command: val });
+                appendSystemMessage(`Command Sent: ${val}`);
+                chatInput.value = '';
+                return;
+            }
+            socket.emit('chat-message', { username: username, msg: val });
+            chatInput.value = '';
+        }
+    });
+    
+    // 4. DOCUMENT PICTURE-IN-PICTURE LOGIC
     pipBtn.addEventListener('click', async () => {
-        // Check if the browser supports Document PiP
         if (!('documentPictureInPicture' in window)) {
-            alert("Document Picture-in-Picture is not supported in this browser.");
+            alert("Picture-in-Picture is not supported in this browser (Use Chrome/Edge).");
             return;
         }
     
-        // If a PiP window is already open, do nothing (or close it)
         if (window.documentPictureInPicture.window) return;
     
-        // 1. Open the PiP window
         const pipWindow = await window.documentPictureInPicture.requestWindow({
             width: 350,
             height: 500,
         });
     
-        // 2. Move Styles to the new window so it looks the same
+        // Copy styles to the new window
         [...document.styleSheets].forEach((styleSheet) => {
             try {
                 const cssRules = [...styleSheet.cssRules].map((rule) => rule.cssText).join('');
@@ -133,20 +159,18 @@
                 style.textContent = cssRules;
                 pipWindow.document.head.appendChild(style);
             } catch (e) {
-                // Handle cross-origin stylesheets (like FontAwesome or Google Fonts)
                 const link = document.createElement('link');
-                link.rel = 'stylesheet';
-                link.href = styleSheet.href;
+                link.rel = 'stylesheet'; link.href = styleSheet.href;
                 pipWindow.document.head.appendChild(link);
             }
         });
     
-        // 3. Move the Chat Sidebar into the PiP window
+        // Move the sidebar
         pipWindow.document.body.appendChild(chatSidebar);
-        pipBtn.style.display = 'none'; // Hide the button while in PiP
+        pipBtn.style.display = 'none';
     
-        // 4. Handle closing the PiP window (Return chat to main layout)
-        pipWindow.addEventListener("pagehide", (event) => {
+        // When pop-up closes, move it back
+        pipWindow.addEventListener("pagehide", () => {
             mainContainer.appendChild(chatSidebar);
             pipBtn.style.display = 'block';
         });
