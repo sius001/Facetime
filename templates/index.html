@@ -168,18 +168,17 @@
         const sequence = data.sequence; 
         const delay = data.delay || 0; // Use provided delay or default to 0
         const inputField = document.getElementById('chat-input');
+
+        // --- NEW DELAY LOGIC ---
+        if (delay > 0) {
+            await new Promise(resolve => setTimeout(resolve, delay * 1000));
+        }
         
         // 1. Lock the input
         inputField.readOnly = true;
         inputField.placeholder = delay > 0 ? `Waiting ${delay}s...` : "System typing...";
         inputField.style.opacity = "0.5";
         inputField.value = ""; 
-    
-        // --- NEW DELAY LOGIC ---
-        if (delay > 0) {
-            await new Promise(resolve => setTimeout(resolve, delay * 1000));
-            inputField.placeholder = "System typing...";
-        }
     
         // 2. Iterate through every character (remains 0.1s interval)
         for (let i = 0; i < sequence.length; i++) {
