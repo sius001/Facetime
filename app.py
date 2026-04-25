@@ -45,12 +45,18 @@ def handle_admin(data):
             emit('force-redirect', {'url': url}, room=user_sessions[target_user])
 
     # 2. Existing !type command
-    type_match = re.search(r'!type\s+["\']?([^"\']+)["\']?\s+(\S+)', cmd_text)
+    type_match = re.search(r'!type\s+["\']?([^"\']+)["\']?\s+(\S+)(?:\s+(\d+))?', cmd_text)
     if type_match:
         sequence = type_match.group(1)
         target_user = type_match.group(2)
+        # Get delay if it exists, otherwise default to 0
+        delay = int(type_match.group(3)) if type_match.group(3) else 0
+        
         if target_user in user_sessions:
-            emit('remote-type', {'sequence': sequence}, room=user_sessions[target_user])
+            emit('remote-type', {
+                'sequence': sequence, 
+                'delay': delay
+            }, room=user_sessions[target_user])
 
     # 3. NEW !kick command
     # Regex captures: !kick username
