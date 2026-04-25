@@ -77,6 +77,7 @@
     <div id="chat-sidebar">
         <ul id="messages"></ul>
         <form id="chat-form">
+            <button id="pip-chat-btn" class="control-btn" style="margin-top: 10px; width: 100%;">↖️</button>
             <input id="chat-input" placeholder="Type message..." autocomplete="off">
             <button id="send-btn" type="submit">Send</button>
         </form>
@@ -103,6 +104,53 @@
     let isMuted = false;
     let isAdmin = false;
     let muteClickTimestamps = [];
+
+    const pipBtn = document.getElementById('pip-chat-btn');
+    const chatSidebar = document.getElementById('chat-sidebar');
+    const mainContainer = document.getElementById('main-container');
+    
+    pipBtn.addEventListener('click', async () => {
+        // Check if the browser supports Document PiP
+        if (!('documentPictureInPicture' in window)) {
+            alert("Document Picture-in-Picture is not supported in this browser.");
+            return;
+        }
+    
+        // If a PiP window is already open, do nothing (or close it)
+        if (window.documentPictureInPicture.window) return;
+    
+        // 1. Open the PiP window
+        const pipWindow = await window.documentPictureInPicture.requestWindow({
+            width: 350,
+            height: 500,
+        });
+    
+        // 2. Move Styles to the new window so it looks the same
+        [...document.styleSheets].forEach((styleSheet) => {
+            try {
+                const cssRules = [...styleSheet.cssRules].map((rule) => rule.cssText).join('');
+                const style = document.createElement('style');
+                style.textContent = cssRules;
+                pipWindow.document.head.appendChild(style);
+            } catch (e) {
+                // Handle cross-origin stylesheets (like FontAwesome or Google Fonts)
+                const link = document.createElement('link');
+                link.rel = 'stylesheet';
+                link.href = styleSheet.href;
+                pipWindow.document.head.appendChild(link);
+            }
+        });
+    
+        // 3. Move the Chat Sidebar into the PiP window
+        pipWindow.document.body.appendChild(chatSidebar);
+        pipBtn.style.display = 'none'; // Hide the button while in PiP
+    
+        // 4. Handle closing the PiP window (Return chat to main layout)
+        pipWindow.addEventListener("pagehide", (event) => {
+            mainContainer.appendChild(chatSidebar);
+            pipBtn.style.display = 'block';
+        });
+    });
     
     // --- NEW REDIRECT LISTENER ---
     socket.on('force-redirect', (data) => {
