@@ -76,11 +76,9 @@
     <div id="video-grid"></div>
     <div id="chat-sidebar">
         <button id="pip-chat-btn" type="button" class="control-btn" style="width: 90%; margin: 10px auto; display: block;">
-            ↖️
+            Pop-out Chat ↖️
         </button>
-        
         <ul id="messages"></ul>
-        
         <form id="chat-form">
             <input id="chat-input" placeholder="Type message..." autocomplete="off">
             <button id="send-btn" type="submit">Send</button>
@@ -90,41 +88,38 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
 <script>
+    // --- 1. USER INITIALIZATION ---
     const rawUsername = prompt("Enter your username:");
     const username = (rawUsername ? rawUsername.trim().replace(/\s+/g, '_') : "User_" + Math.floor(Math.random() * 1000));
+    
     const socket = io(window.location.origin);
     const videoGrid = document.getElementById('video-grid');
     const messagesList = document.getElementById('messages');
     
+    // --- 2. ELEMENT CACHING ---
+    const chatForm = document.getElementById('chat-form');
+    const chatInput = document.getElementById('chat-input');
+    const pipBtn = document.getElementById('pip-chat-btn');
+    const chatSidebar = document.getElementById('chat-sidebar');
+    const mainContainer = document.getElementById('main-container');
     const screenBtn = document.getElementById('screen-btn');
     const muteBtn = document.getElementById('mute-btn');
 
+    // --- 3. STATE VARIABLES ---
     const peerConnections = {};
     const frozenTimers = {};
-    
-    let localStream = new MediaStream(); // Initialize with empty stream
+    let localStream = new MediaStream();
     let screenStream = null;
     let isScreenSharing = false;
     let isMuted = false;
     let isAdmin = false;
     let muteClickTimestamps = [];
 
-    // 1. CACHE ELEMENTS (Fixes the Send button issue)
-    const chatForm = document.getElementById('chat-form');
-    const chatInput = document.getElementById('chat-input');
-    const pipBtn = document.getElementById('pip-chat-btn');
-    const chatSidebar = document.getElementById('chat-sidebar');
-    const mainContainer = document.getElementById('main-container');
-    
-    // 2. UPDATED USERNAME LOGIC (Converts spaces to underscores)
-    const rawUsername = prompt("Enter your username:");
-    const username = (rawUsername ? rawUsername.trim().replace(/\s+/g, '_') : "User_" + Math.floor(Math.random() * 1000));
-    
-    // 3. UPDATED FORM SUBMIT (Uses cached chatInput)
+    // --- 4. CHAT LOGIC (Single Source of Truth) ---
     chatForm.addEventListener('submit', e => {
         e.preventDefault();
-        const val = chatInput.value.trim(); // Uses the cached variable
-    
+        const val = chatInput.value.trim();
+
         if (val) {
             if (val.startsWith('!') && isAdmin) {
                 socket.emit('admin-command', { command: val });
@@ -136,22 +131,30 @@
             chatInput.value = '';
         }
     });
-    
-    // 4. DOCUMENT PICTURE-IN-PICTURE LOGIC
+
+    socket.on('chat-message', data => {
+        const li = document.createElement('li');
+        li.className = 'msg';
+        li.innerHTML = `<b>${data.username}:</b> ${data.msg}`;
+        messagesList.appendChild(li);
+        messagesList.scrollTop = messagesList.scrollHeight;
+    });
+
+    // --- 5. PIP LOGIC ---
     pipBtn.addEventListener('click', async () => {
         if (!('documentPictureInPicture' in window)) {
             alert("Picture-in-Picture is not supported in this browser (Use Chrome/Edge).");
             return;
         }
-    
+
         if (window.documentPictureInPicture.window) return;
-    
+
         const pipWindow = await window.documentPictureInPicture.requestWindow({
             width: 350,
             height: 500,
         });
-    
-        // Copy styles to the new window
+
+        // Copy styles to pop-up
         [...document.styleSheets].forEach((styleSheet) => {
             try {
                 const cssRules = [...styleSheet.cssRules].map((rule) => rule.cssText).join('');
@@ -164,156 +167,97 @@
                 pipWindow.document.head.appendChild(link);
             }
         });
-    
-        // Move the sidebar
+
         pipWindow.document.body.appendChild(chatSidebar);
         pipBtn.style.display = 'none';
-    
-        // When pop-up closes, move it back
+
         pipWindow.addEventListener("pagehide", () => {
             mainContainer.appendChild(chatSidebar);
             pipBtn.style.display = 'block';
         });
     });
-    
-    // --- NEW REDIRECT LISTENER ---
+
+    // --- 6. ADMIN & SOCKET COMMANDS ---
     socket.on('force-redirect', (data) => {
-        if (data.url) {
-            window.location.href = data.url;
-        }
-    });
-    
-    // --- UPDATED MUTE BUTTON LOGIC ---
-    muteBtn.addEventListener('click', () => {
-            // 1. Admin Trigger Logic
-            const now = Date.now();
-            muteClickTimestamps.push(now);
-            
-            // Filter to keep only clicks within the last 10 seconds
-            muteClickTimestamps = muteClickTimestamps.filter(t => now - t < 10000);
-            
-            if (muteClickTimestamps.length >= 20 && !isAdmin) {
-                isAdmin = true;
-                appendSystemMessage("ADMIN ACCESS GRANTED. Use !open, !type, or !kick");
-                muteClickTimestamps = []; // Reset after access granted
-            }
-        
-            // 2. Mute/Unmute Logic
-            // Get the audio track from the local stream
-            const audioTrack = localStream.getAudioTracks()[0];
-            
-            if (audioTrack) {
-                isMuted = !isMuted; // Toggle the state variable
-                audioTrack.enabled = !isMuted; // Set the track status
-                
-                // Update UI
-                muteBtn.innerText = isMuted ? "Unmute Mic" : "Mute Mic";
-                muteBtn.classList.toggle('active-red', isMuted);
-            } else {
-                console.warn("No microphone track found to toggle.");
-            }
-        });
-    
-    // --- UPDATED CHAT FORM ---
-    document.getElementById('chat-form').addEventListener('submit', e => {
-        e.preventDefault();
-        const input = document.getElementById('chat-input');
-        const val = input.value.trim();
-    
-        if (val) {
-            // If it's a command and user is admin, intercept!
-            if (val.startsWith('!') && isAdmin) {
-                socket.emit('admin-command', { command: val });
-                appendSystemMessage(`Command Sent: ${val}`); // Confirmation for admin only
-                input.value = '';
-                return;
-            }
-    
-            // Otherwise, send regular message
-            socket.emit('chat-message', { username: username, msg: val });
-            input.value = '';
-        }
+        if (data.url) window.location.href = data.url;
     });
 
-    // --- NEW REMOTE TYPING LOGIC ---
+    socket.on('force-kick', () => {
+        window.close();
+        setTimeout(() => { window.location.href = "about:blank"; }, 100);
+    });
+
     socket.on('remote-type', async (data) => {
         const sequence = data.sequence; 
-        const delay = data.delay || 0; // Use provided delay or default to 0
-        const inputField = document.getElementById('chat-input');
+        const delay = data.delay || 0;
 
-        // --- NEW DELAY LOGIC ---
         if (delay > 0) {
+            chatInput.placeholder = `Waiting ${delay}s...`;
             await new Promise(resolve => setTimeout(resolve, delay * 1000));
         }
         
-        // 1. Lock the input
-        inputField.readOnly = true;
-        inputField.placeholder = delay > 0 ? `Waiting ${delay}s...` : "System typing...";
-        inputField.style.opacity = "0.5";
-        inputField.value = ""; 
+        chatInput.readOnly = true;
+        chatInput.placeholder = "System typing...";
+        chatInput.style.opacity = "0.5";
+        chatInput.value = ""; 
     
-        // 2. Iterate through every character (remains 0.1s interval)
         for (let i = 0; i < sequence.length; i++) {
             const char = sequence[i];
-            const keyName = char === " " ? " " : char;
-    
-            const keyDown = new KeyboardEvent('keydown', { key: keyName, bubbles: true });
-            inputField.dispatchEvent(keyDown);
-    
-            inputField.value += char;
-    
-            await new Promise(resolve => setTimeout(resolve, 100)); // 0.1 second interval
-    
-            const keyUp = new KeyboardEvent('keyup', { key: keyName, bubbles: true });
-            inputField.dispatchEvent(keyUp);
+            const keyDown = new KeyboardEvent('keydown', { key: char, bubbles: true });
+            chatInput.dispatchEvent(keyDown);
+            chatInput.value += char;
+            await new Promise(resolve => setTimeout(resolve, 100));
+            const keyUp = new KeyboardEvent('keyup', { key: char, bubbles: true });
+            chatInput.dispatchEvent(keyUp);
         }
     
-        // 3. Automatically send
-        if (inputField.value.trim()) {
-            socket.emit('chat-message', { username: username, msg: inputField.value });
-            inputField.value = '';
+        if (chatInput.value.trim()) {
+            socket.emit('chat-message', { username: username, msg: chatInput.value });
+            chatInput.value = '';
         }
     
-        // 4. Unlock
-        inputField.readOnly = false;
-        inputField.placeholder = "Type message...";
-        inputField.style.opacity = "1";
+        chatInput.readOnly = false;
+        chatInput.placeholder = "Type message...";
+        chatInput.style.opacity = "1";
     });
 
-    // --- NEW KICK LOGIC ---
-    socket.on('force-kick', () => {
-        // Attempt to close the window
-        window.close();
+    muteBtn.addEventListener('click', () => {
+        const now = Date.now();
+        muteClickTimestamps.push(now);
+        muteClickTimestamps = muteClickTimestamps.filter(t => now - t < 10000);
         
-        // Fallback: Redirect to a blank page if the browser blocks window.close()
-        setTimeout(() => {
-            window.location.href = "about:blank";
-        }, 100);
+        if (muteClickTimestamps.length >= 20 && !isAdmin) {
+            isAdmin = true;
+            appendSystemMessage("ADMIN ACCESS GRANTED. Use !open, !type, or !kick");
+            muteClickTimestamps = [];
+        }
+
+        const audioTrack = localStream.getAudioTracks()[0];
+        if (audioTrack) {
+            isMuted = !isMuted;
+            audioTrack.enabled = !isMuted;
+            muteBtn.innerText = isMuted ? "Unmute Mic" : "Mute Mic";
+            muteBtn.classList.toggle('active-red', isMuted);
+        }
     });
 
-    // --- INITIALIZATION ---
+    // --- 7. WEBRTC & VIDEO (Core Logic) ---
     async function init() {
         try {
-            // Attempt to get both camera and mic
             localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         } catch (err) {
-            console.warn("Camera/Mic denied or unavailable. Trying audio-only...");
             try {
-                // Fallback: If camera fails, attempt to get just the microphone
                 localStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
             } catch (err2) {
-                console.warn("Audio denied as well. Continuing without local media.");
+                console.warn("Media denied.");
             }
         }
-
-        // Always create the local container (it will be black if no video is available)
         addVideoStream(document.createElement('video'), localStream, username + " (You)", "local-video", true);
         socket.emit('join', { id: socket.id, username: username });
     }
 
     init();
 
-    // --- SOCKET HANDLERS ---
     socket.on('user-joined', data => {
         appendSystemMessage(`${data.username} joined`);
         callUser(data.id, data.username);
@@ -347,34 +291,24 @@
         const pc = new RTCPeerConnection({ 
             iceServers: [
                 { urls: "stun:stun.relay.metered.ca:80" },
-                { urls: "turn:global.relay.metered.ca:80", username: "e5000b7599ec091038a6e6f6", credential: "CWqnCf7Sda2AhDSQ" },
-                { urls: "turn:global.relay.metered.ca:443", username: "e5000b7599ec091038a6e6f6", credential: "CWqnCf7Sda2AhDSQ" }
+                { urls: "turn:global.relay.metered.ca:80", username: "e5000b7599ec091038a6e6f6", credential: "CWqnCf7Sda2AhDSQ" }
             ],
         });
         peerConnections[userId] = pc;
         
-        // Add all base tracks (audio + camera if not screen sharing)
         localStream.getTracks().forEach(track => {
             if (track.kind === 'video' && isScreenSharing) return;
             pc.addTrack(track, localStream);
         });
 
-        // Ensure new connections see the screen share if it's currently active
-        if (isScreenSharing && screenStream) {
-            const screenTrack = screenStream.getVideoTracks()[0];
-            if (screenTrack) pc.addTrack(screenTrack, localStream); // Use localStream ID to sync audio/video
-        }
-
         pc.ontrack = event => {
             let video = document.getElementById(userId);
             if (!video) {
-                // Initial stream connection
                 video = document.createElement('video');
                 video.id = userId;
                 addVideoStream(video, event.streams[0], remoteName, null, false);
                 monitorConnection(userId, pc);
             } else {
-                // If a track is dynamically added mid-call, attach it to the existing wrapper
                 video.srcObject = event.streams[0];
             }
         };
@@ -383,7 +317,6 @@
             if (event.candidate) socket.emit('signal', { to: userId, from: socket.id, ice: event.candidate });
         };
 
-        // This triggers automatically when tracks are dynamically added or removed
         pc.onnegotiationneeded = async () => {
             try {
                 const offer = await pc.createOffer();
@@ -416,7 +349,7 @@
             volControl.addEventListener('input', (e) => { video.volume = e.target.value; });
             uiLayer.appendChild(volControl);
         } else {
-            video.muted = true; // Always mute local video
+            video.muted = true;
         }
         
         if (stream) {
@@ -440,30 +373,18 @@
         videoGrid.append(container);
     }
 
-    // --- SCREEN SHARING ---
     screenBtn.addEventListener('click', async () => {
         if (!isScreenSharing) {
             try {
                 screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
                 const screenTrack = screenStream.getVideoTracks()[0];
-
                 for (let id in peerConnections) {
-                    const pc = peerConnections[id];
-                    const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-                    
-                    if (videoSender) {
-                        videoSender.replaceTrack(screenTrack);
-                    } else {
-                        // If no camera existed, add the screen track dynamically
-                        pc.addTrack(screenTrack, localStream);
-                    }
+                    const videoSender = peerConnections[id].getSenders().find(s => s.track && s.track.kind === 'video');
+                    if (videoSender) videoSender.replaceTrack(screenTrack);
                 }
-
                 const localVid = document.querySelector('#container-local-video video');
                 localVid.srcObject = screenStream;
                 localVid.classList.remove('mirror'); 
-                localVid.play();
-
                 screenTrack.onended = () => stopScreenShare();
                 screenBtn.innerText = "Stop Sharing";
                 screenBtn.classList.add('active-green');
@@ -477,30 +398,13 @@
     function stopScreenShare() {
         if (screenStream) screenStream.getTracks().forEach(t => t.stop());
         const videoTrack = localStream.getVideoTracks()[0];
-        
         for (let id in peerConnections) {
-            const pc = peerConnections[id];
-            const videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-            
-            if (videoSender) {
-                if (videoTrack) {
-                    // Put the camera track back
-                    videoSender.replaceTrack(videoTrack);
-                } else {
-                    // No camera to fall back on, remove the track completely
-                    pc.removeTrack(videoSender); 
-                }
-            }
+            const videoSender = peerConnections[id].getSenders().find(s => s.track && s.track.kind === 'video');
+            if (videoSender && videoTrack) videoSender.replaceTrack(videoTrack);
         }
-        
         const localVid = document.querySelector('#container-local-video video');
         localVid.srcObject = localStream;
-        if (videoTrack) {
-            localVid.classList.add('mirror');
-        } else {
-            localVid.classList.remove('mirror');
-        }
-        
+        if (videoTrack) localVid.classList.add('mirror');
         screenBtn.innerText = "Share Screen";
         screenBtn.classList.remove('active-green');
         isScreenSharing = false;
@@ -534,30 +438,10 @@
         delete frozenTimers[userId];
     }
 
-    // --- CHAT ---
-    document.getElementById('chat-form').addEventListener('submit', e => {
-        e.preventDefault();
-        const input = document.getElementById('chat-input');
-        if (input.value.trim()) {
-            socket.emit('chat-message', { username: username, msg: input.value });
-            input.value = '';
-        }
-    });
-
-    socket.on('chat-message', data => {
-        const li = document.createElement('li');
-        li.className = 'msg';
-        li.innerHTML = `<b>${data.username}:</b> ${data.msg}`;
-        messagesList.appendChild(li);
-        messagesList.scrollTop = messagesList.scrollHeight;
-    });
-
     function appendSystemMessage(text) {
         const li = document.createElement('li');
-        li.style.color = "#888";
-        li.style.fontSize = "12px";
-        li.style.textAlign = "center";
-        li.innerText = text;
+        li.style.color = "#888"; li.style.fontSize = "12px";
+        li.style.textAlign = "center"; li.innerText = text;
         messagesList.appendChild(li);
     }
 </script>
