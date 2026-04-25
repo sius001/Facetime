@@ -10,6 +10,36 @@ socketio = SocketIO(app, cors_allowed_origins="*", logger=True, engineio_logger=
 # Mapping of username -> session_id
 user_sessions = {}
 
+@app.route('/proxy')
+def proxy():
+    url = request.args.get('url')
+    if not url:
+        return "No URL provided", 400
+    
+    # Ensure URL has a protocol
+    if not url.startswith('http'):
+        url = 'http://' + url
+
+    try:
+        # Fetch the target website
+        # We use a common User-Agent to avoid being blocked as a bot
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0'}
+        resp = requests.get(url, headers=headers, stream=True, timeout=10)
+        
+        # Filter out security headers that prevent iframing
+        excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection', 
+                            'x-frame-options', 'content-security-policy', 'strict-transport-security']
+        
+        headers = [(name, value) for (name, value) in resp.raw.headers.items()
+                   if name.lower() not in excluded_headers]
+
+        # Create the response
+        response = Response(resp.content, resp.status_code, headers)
+        return response
+        
+    except Exception as e:
+        return f"Proxy Error: {str(e)}", 500
+
 @app.route('/')
 def index():
     return render_template('index.html')
