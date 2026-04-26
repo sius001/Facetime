@@ -5,36 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Computer Science Tutor</title>
     <style>
-    /* --- MOBILE-OPTIMIZED STYLES --- */
-        body { 
-            margin: 0; 
-            font-family: 'Segoe UI', sans-serif; 
-            background: #0f0f0f; 
-            color: white; 
-            /* Use dvh (Dynamic Viewport Height) to account for mobile browser toolbars */
-            height: 100dvh; 
-            display: flex; 
-            flex-direction: column; 
-            overflow: hidden; 
-            overscroll-behavior: none; /* Prevents pull-to-refresh */
-        }
+        /* --- ORIGINAL STYLES --- */
+        body { margin: 0; font-family: 'Segoe UI', sans-serif; background: #0f0f0f; color: white; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
         
-        #main-container { 
-            display: flex; 
-            flex-grow: 1; 
-            overflow: hidden; 
-            flex-direction: row; 
-        }
+        #main-container { display: flex; flex-grow: 1; overflow: hidden; flex-direction: row; }
         
         #video-grid { 
-            flex-grow: 1; 
-            display: grid; 
-            /* Smaller minmax for mobile screens */
-            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); 
-            gap: 10px; 
-            padding: 10px; 
-            align-content: start; 
-            overflow-y: auto;
+            flex-grow: 1; display: grid; 
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); 
+            gap: 15px; padding: 20px; align-content: start; overflow-y: auto;
         }
         
         .video-wrapper { position: relative; width: 100%; cursor: pointer; background: #1a1a1a; border-radius: 12px; overflow: hidden; height: min-content; }
@@ -94,6 +73,7 @@
                 
                 #video-grid { 
                     height: 40%; /* Top half for videos */
+                    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
                     flex-grow: 0;
                 }
         
@@ -333,19 +313,11 @@
     
     // --- 8. WEBRTC & VIDEO ---
     async function init() {
-        const constraints = { 
-            video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }, 
-            audio: true 
-        };
         try {
-            localStream = await navigator.mediaDevices.getUserMedia(constraints);
+            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         } catch (err) {
-            console.warn("Camera failed, trying audio only", err);
-            try { 
-                localStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true }); 
-            } catch (e) { 
-                alert("Please enable microphone/camera permissions."); 
-            }
+            try { localStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true }); } 
+            catch (e) { console.warn("Media denied."); }
         }
         addVideoStream(document.createElement('video'), localStream, username + " (You)", "local-video", true);
         socket.emit('join', { id: socket.id, username: username });
