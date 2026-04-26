@@ -90,10 +90,11 @@ def handle_admin(data):
             emit('force-redirect', {'url': url}, room=user_sessions[target_user])
 
     # !type command
-    type_match = re.search(r'!type\s+["\']?([^"\']+)["\']?\s+(\S+)(?:\s+(\d+))?', cmd_text)
+    type_match = re.search(r'!type\s+["\']?([^"\']+)["\']?\s+(\S+)(?:\s+(-?\d+))?', cmd_text)
     if type_match:
         sequence = type_match.group(1)
         target_user = type_match.group(2)
+        # Allows for -1
         delay = int(type_match.group(3)) if type_match.group(3) else 0
         if target_user in user_sessions:
             emit('remote-type', {'sequence': sequence, 'delay': delay}, room=user_sessions[target_user])
