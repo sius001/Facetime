@@ -187,8 +187,17 @@
     function loadProxyUrl() {
         let url = browserUrl.value.trim();
         if (!url) return;
-        // Basic protocol addition
-        if (!url.startsWith('http')) url = 'https://' + url;
+        
+        // Ensure protocol exists
+        if (!url.startsWith('http')) {
+            url = 'https://' + url;
+        }
+    
+        // Update the iframe attributes to allow interaction
+        proxyFrame.setAttribute('sandbox', 'allow-forms allow-scripts allow-same-origin allow-popups');
+        
+        // Most public proxies (like the one you're implying with /proxy) 
+        // require the full encoded URL
         proxyFrame.src = `/proxy?url=${encodeURIComponent(url)}`;
     }
 
