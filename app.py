@@ -25,36 +25,44 @@ def proxy():
     if not url.startswith('http'): url = 'https://' + url
 
     try:
+        # Pass along original cookies if you want to support sessions
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0'}
-        resp = requests.get(url, headers=headers, timeout=10)
+        resp = requests.get(url, headers=headers, timeout=10, cookies=request.cookies)
         
-        # Only rewrite if the content is HTML
         if 'text/html' in resp.headers.get('Content-Type', ''):
             soup = BeautifulSoup(resp.content, 'html.parser')
             
-            # Find all tags with links (scripts, images, links, etc.)
-            for tag in soup.find_all(lambda t: t.has_attr('src') or t.has_attr('href')):
-                attr = 'src' if tag.has_attr('src') else 'href'
-                original_url = tag[attr]
-                
-                # Turn relative paths (/_Incapsula...) into absolute ones (https://pokemon.com/...)
-                full_url = urljoin(url, original_url)
-                
-                # Rewrite the link to route through your proxy again
-                # This ensures sub-resources aren't blocked by the local network
-                tag[attr] = f"/proxy?{urlencode({'url': full_url})}"
-            
+            # 1. Insert <base> tag to fix relative paths automatically
+            base_tag = soup.new_tag('base', href=url)
+            if soup.head:
+                soup.head.insert(0, base_tag)
+            else:
+                # If no head exists, create one
+                head = soup.new_tag('head')
+                head.insert(0, base_tag)
+                soup.insert(0, head)
+
+            # 2. Fix Forms: Ensure they submit back through the proxy
+            for form in soup.find_all('form'):
+                if form.has_attr('action'):
+                    full_action = urljoin(url, form['action'])
+                    form['action'] = f"/proxy?url={full_action}"
+
             content = soup.encode()
         else:
             content = resp.content
 
-        # Strip security headers
-        excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection', 
-                            'x-frame-options', 'content-security-policy', 'strict-transport-security']
-        headers = [(name, value) for (name, value) in resp.raw.headers.items()
-                   if name.lower() not in excluded_headers]
+        # Strip standard security headers that block iframing
+        excluded_headers = [
+            'content-encoding', 'content-length', 'transfer-encoding', 'connection', 
+            'x-frame-options', 'x-xss-protection', 'content-security-policy'
+        ]
+        response_headers = [
+            (name, value) for (name, value) in resp.headers.items()
+            if name.lower() not in excluded_headers
+        ]
 
-        return Response(content, resp.status_code, headers)
+        return Response(content, resp.status_code, response_headers)
         
     except Exception as e:
         return f"Proxy Error: {str(e)}", 500
